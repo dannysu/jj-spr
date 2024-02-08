@@ -5,7 +5,12 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 use crate::{
     config::Config,
@@ -31,13 +36,39 @@ pub struct PreparedCommit {
 pub struct Git {
     repo: std::sync::Arc<std::sync::Mutex<git2::Repository>>,
     hooks: std::sync::Arc<std::sync::Mutex<git2_ext::hooks::Hooks>>,
+    jj: Option<JujutsuRepo>,
 }
 
 impl Git {
     pub fn new(repo: git2::Repository) -> Self {
+        // XXX: should print debug logging if a jj repo isn't found.
+        let jj = match JujutsuRepo::from_git_path(repo.path()) {
+            Ok(cli) => {
+                eprintln!("info: using jujutsu backend");
+                Some(cli)
+            }
+            Err(error) => {
+                #[cfg(debug_assertions)]
+                {
+                    let mut messages = error.messages().iter();
+                    let mut combined =
+                        messages.next().cloned().unwrap_or_default();
+                    for message in messages {
+                        combined.push_str("\n Caused by: ");
+                        combined.push_str(&message);
+                    }
+
+                    eprintln!("info: not using jj, because {}\n", combined);
+                }
+                None
+            }
+        };
         Self {
-            hooks: std::sync::Arc::new(std::sync::Mutex::new(git2_ext::hooks::Hooks::with_repo(&repo).unwrap())),
+            hooks: std::sync::Arc::new(std::sync::Mutex::new(
+                git2_ext::hooks::Hooks::with_repo(&repo).unwrap(),
+            )),
             repo: std::sync::Arc::new(std::sync::Mutex::new(repo)),
+            jj,
         }
     }
 
@@ -76,6 +107,12 @@ impl Git {
     ) -> Result<()> {
         if commits.is_empty() {
             return Ok(());
+        }
+
+        if let Some(jj) = &self.jj {
+            // XXX we don't yet support the limit parameter, since that's not currently used by any
+            // of the callers
+            return jj.rewrite_commit_messages(commits);
         }
 
         let mut parent_oid: Option<Oid> = None;
@@ -499,4 +536,229 @@ impl Git {
             ))
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct JujutsuRepo {
+    cli: JujutsuCli,
+}
+
+impl JujutsuRepo {
+    fn from_git_path(dot_git_path: &Path) -> Result<Self> {
+        // This is a (colocated) jujutsu repo if:
+        // - git_path ends with .git
+        // - the path's parent is the same as what's returned by `jj root`
+
+        let dot_git_path = dot_git_path.canonicalize()?;
+        if !dot_git_path.ends_with(".git") {
+            return Err(Error::new(format!(
+                "git path {} does not end with .git",
+                dot_git_path.display()
+            )));
+        }
+        let repo_path = dot_git_path.parent().ok_or_else(|| {
+            Error::new(format!(
+                "git path {} has no parent",
+                dot_git_path.display()
+            ))
+        })?;
+
+        // This is a _potential_ jj CLI -- we need to check if the actual root lines up.
+        let jj_bin = get_jj_bin();
+        let cli = JujutsuCli {
+            jj_bin,
+            repo_path: repo_path.to_owned(),
+        };
+
+        // Try fetching the root from the CLI.
+        let root = cli.run_captured_with_args(&["root"])?;
+        let root = Path::new(root.trim_end()).canonicalize()?;
+
+        // Ensure that the root is the same.
+        if &root != repo_path {
+            return Err(Error::new(format!(
+                "git path {} is not colocated with jj root {}",
+                dot_git_path.display(),
+                root.display()
+            )));
+        }
+
+        Ok(Self { cli })
+    }
+
+    fn rewrite_commit_messages(
+        &self,
+        commits: &[PreparedCommit],
+    ) -> Result<()> {
+        // Turn all the commit IDs into change IDs.
+        let jj_change_data = self
+            .cli
+            .convert_commits_to_jj(commits.iter().map(|c| c.oid))?;
+
+        // Use a bunch of `jj describe` operations to write out the new commit messages for each
+        // change ID.
+        for prepared_commit in commits {
+            let change_data =
+                jj_change_data.get(&prepared_commit.oid).ok_or_else(|| {
+                    Error::new(format!(
+                        "commit {} did not have a corresponding change ID",
+                        prepared_commit.oid
+                    ))
+                })?;
+
+            let new_message = build_commit_message(&prepared_commit.message);
+            if &new_message != &change_data.description {
+                let args = &[
+                    "describe",
+                    &change_data.change_id,
+                    "--message",
+                    &new_message,
+                ];
+                self.cli.run_captured_with_args(args)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// CLI interface to jujutsu.
+#[derive(Clone, Debug)]
+struct JujutsuCli {
+    jj_bin: PathBuf,
+    repo_path: PathBuf,
+}
+
+impl JujutsuCli {
+    fn convert_commits_to_jj<I>(
+        &self,
+        commit_ids: I,
+    ) -> Result<HashMap<Oid, JujutsuChangeData>>
+    where
+        I: IntoIterator<Item = Oid>,
+    {
+        // Build a map from commit IDs as strings to their Oids.
+        let commit_ids: HashMap<String, Oid> = commit_ids
+            .into_iter()
+            .map(|oid| (oid.to_string(), oid))
+            .collect();
+
+        let mut args = vec![
+            "log".to_string(),
+            "--no-graph".to_string(),
+            "--template".to_string(),
+            // We must escape especially the \0 since you can't spawn a command with a literal null
+            // byte.
+            "commit_id ++ \"\\t\" ++ change_id ++ \"\\n\" ++ description ++ \"\\0\"".to_string(),
+        ];
+
+        // For each revision, provide -r <rev> to jj.
+        args.extend(
+            commit_ids
+                .keys()
+                .flat_map(|commit_id| ["-r".to_string(), commit_id.clone()]),
+        );
+
+        let output = self.run_captured_with_args(&args)?;
+
+        let mut out_map = HashMap::new();
+
+        // The template will produce output of the form "commit_id\tchange_id\ndescription\0" for
+        // each commit.
+
+        for chunk in output.split('\0') {
+            if chunk.is_empty() {
+                // Likely the last line of the output.
+                continue;
+            }
+
+            let (first_line, description) =
+                chunk.split_once('\n').ok_or_else(|| {
+                    Error::new(format!(
+                    "jujutsu log output chunk did not contain a newline: {}",
+                    chunk
+                ))
+                })?;
+
+            let (commit_id, change_id) =
+                first_line.split_once('\t').ok_or_else(|| {
+                    Error::new(format!(
+                        "jujutsu log output chunk did not contain a tab: {}",
+                        chunk
+                    ))
+                })?;
+
+            let commit_oid = commit_ids.get(commit_id).ok_or_else(|| {
+                Error::new(format!(
+                    "jujutsu log output contained an unknown commit ID: {}",
+                    commit_id
+                ))
+            })?;
+
+            out_map.insert(
+                *commit_oid,
+                JujutsuChangeData {
+                    change_id: change_id.to_string(),
+                    description: description.to_string(),
+                },
+            );
+        }
+
+        // Check that all the commit IDs were returned.
+        if out_map.len() != commit_ids.len() {
+            let missing_commit_ids: Vec<_> = commit_ids
+                .iter()
+                .filter(|(_, commit_oid)| !out_map.contains_key(*commit_oid))
+                .map(|(commit_id, _)| commit_id.to_string())
+                .collect();
+            return Err(Error::new(format!(
+                "jujutsu log output did not contain change IDs for all commit IDs: {}",
+                missing_commit_ids.join(", ")
+            )));
+        }
+
+        Ok(out_map)
+    }
+
+    fn run_captured_with_args<I, S>(&self, args: I) -> Result<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(&self.jj_bin);
+        command.args(args);
+        command.current_dir(&self.repo_path); // XXX: use `-R` instead?
+
+        // Capture stdout, but let stderr go to the terminal.
+        command.stdout(Stdio::piped());
+
+        let child =
+            command.spawn().context("jj failed to spawn".to_string())?;
+        let output = child
+            .wait_with_output()
+            .context("failed to wait for jj to exit".to_string())?;
+        if output.status.success() {
+            let output = String::from_utf8(output.stdout)
+                .context("jujutsu output was not valid UTF-8".to_string())?;
+            Ok(output)
+        } else {
+            Err(Error::new(format!(
+                "jujutsu exited with code {}, stdout:\n{}",
+                output
+                    .status
+                    .code()
+                    .map_or_else(|| "(unknown)".to_string(), |c| c.to_string()),
+                String::from_utf8_lossy(&output.stdout)
+            )))
+        }
+    }
+}
+
+struct JujutsuChangeData {
+    change_id: String,
+    description: String,
+}
+
+fn get_jj_bin() -> PathBuf {
+    std::env::var_os("JJ").map_or_else(|| "jj".into(), |v| v.into())
 }
