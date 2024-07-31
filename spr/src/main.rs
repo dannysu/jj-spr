@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use reqwest::{self, header};
 use spr::{
     commands,
-    error::{Error, Result},
+    error::{Error, Result, ResultExt},
     output::output,
 };
 
@@ -146,7 +146,8 @@ pub async fn spr() -> Result<()> {
         require_test_plan,
     );
 
-    let git = spr::git::Git::new(repo);
+    let git = spr::git::Git::new(repo)
+        .context("could not initialize Git backend".to_owned())?;
 
     if let Commands::Format(opts) = cli.command {
         return commands::format::format(opts, &git, &config).await;

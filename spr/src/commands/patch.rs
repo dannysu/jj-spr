@@ -115,13 +115,13 @@ pub async fn patch(
     let patch_branch_commit = repo.find_commit(patch_branch_oid)?;
 
     // Create the new branch, now that we know the commit it shall point to
-    repo.branch(&branch_name, &patch_branch_commit, true)?;
+    repo.force_branch(&branch_name, &patch_branch_commit)?;
 
     output("🌱", &format!("Created new branch: {}", &branch_name))?;
 
     if !opts.no_checkout {
         // Check out the new branch
-        repo.checkout_tree(patch_branch_commit.as_object(), None)?;
+        repo.checkout_tree(patch_branch_commit.as_object())?;
         repo.set_head(&format!("refs/heads/{}", branch_name))?;
         output("✅", "Checked out")?;
     }

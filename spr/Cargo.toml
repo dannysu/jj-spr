@@ -12,6 +12,7 @@ exclude = [".github", ".gitignore"]
 [dependencies]
 clap = { version = "^3.2.6", features = ["derive", "wrap_help"] }
 console = "^0.15.0"
+debug-ignore = "1.0.5"
 dialoguer = "^0.10.1"
 futures = "^0.3.21"
 futures-lite = "^1.12.0"

@@ -125,7 +125,7 @@ pub async fn land(
         let repo = git.repo();
         let current_master = repo.find_commit(current_master)?;
         let pr_head = repo.find_commit(pull_request.head_oid)?;
-        repo.merge_commits(&current_master, &pr_head, None)
+        repo.merge_commits(&current_master, &pr_head)
     }?;
 
     let merge_matches_cherrypick = if merge_index.has_conflicts() {

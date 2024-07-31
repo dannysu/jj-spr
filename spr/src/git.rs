@@ -21,6 +21,7 @@ use crate::{
     },
     utils::run_command,
 };
+use debug_ignore::DebugIgnore;
 use git2::Oid;
 
 #[derive(Debug)]
@@ -34,13 +35,12 @@ pub struct PreparedCommit {
 
 #[derive(Clone)]
 pub struct Git {
-    repo: std::sync::Arc<std::sync::Mutex<git2::Repository>>,
-    hooks: std::sync::Arc<std::sync::Mutex<git2_ext::hooks::Hooks>>,
+    repo: std::sync::Arc<std::sync::Mutex<GitRepo>>,
     jj: Option<JujutsuRepo>,
 }
 
 impl Git {
-    pub fn new(repo: git2::Repository) -> Self {
+    pub fn new(repo: git2::Repository) -> Result<Self> {
         // XXX: should print debug logging if a jj repo isn't found.
         let jj = match JujutsuRepo::from_git_path(repo.path()) {
             Ok(cli) => {
@@ -63,21 +63,16 @@ impl Git {
                 None
             }
         };
-        Self {
-            hooks: std::sync::Arc::new(std::sync::Mutex::new(
-                git2_ext::hooks::Hooks::with_repo(&repo).unwrap(),
-            )),
-            repo: std::sync::Arc::new(std::sync::Mutex::new(repo)),
+        Ok(Self {
+            repo: std::sync::Arc::new(std::sync::Mutex::new(GitRepo::new(
+                repo,
+            )?)),
             jj,
-        }
+        })
     }
 
-    pub fn repo(&self) -> std::sync::MutexGuard<git2::Repository> {
+    pub(crate) fn repo(&self) -> std::sync::MutexGuard<GitRepo> {
         self.repo.lock().expect("poisoned mutex")
-    }
-
-    fn hooks(&self) -> std::sync::MutexGuard<git2_ext::hooks::Hooks> {
-        self.hooks.lock().expect("poisoned mutex")
     }
 
     pub fn get_commit_oids(&self, master_ref: &str) -> Result<Vec<Oid>> {
@@ -120,7 +115,6 @@ impl Git {
         let mut message: String;
         let first_parent = commits[0].parent_oid;
         let repo = self.repo();
-        let hooks = self.hooks();
 
         for prepared_commit in commits.iter_mut() {
             let commit = repo.find_commit(prepared_commit.oid)?;
@@ -140,17 +134,15 @@ impl Git {
 
             if updating {
                 let new_oid = repo.commit(
-                    None,
                     &commit.author(),
                     &commit.committer(),
                     &message[..],
                     &commit.tree()?,
                     &[&repo.find_commit(parent_oid.unwrap_or(first_parent))?],
+                    RunPostRewriteRebaseHooks::Yes {
+                        prepared_commit: prepared_commit.oid,
+                    },
                 )?;
-                hooks.run_post_rewrite_rebase(
-                    &repo,
-                    &[(prepared_commit.oid, new_oid)],
-                );
                 prepared_commit.oid = new_oid;
                 parent_oid = Some(new_oid);
             } else {
@@ -178,19 +170,17 @@ impl Git {
             return Ok(());
         }
         let repo = self.repo();
-        let hooks = self.hooks();
 
         for prepared_commit in commits.iter_mut() {
             let new_parent_commit = repo.find_commit(new_parent_oid)?;
             let commit = repo.find_commit(prepared_commit.oid)?;
 
-            let mut index =
-                repo.cherrypick_commit(&commit, &new_parent_commit, 0, None)?;
+            let index = repo.cherrypick_commit(&commit, &new_parent_commit)?;
             if index.has_conflicts() {
                 return Err(Error::new("Rebase failed due to merge conflicts"));
             }
 
-            let tree_oid = index.write_tree_to(&repo)?;
+            let tree_oid = self.write_index(index)?;
             if tree_oid == new_parent_commit.tree_id() {
                 // Rebasing makes this an empty commit. This is probably because
                 // we just landed this commit. So we should run a hook as this
@@ -199,26 +189,24 @@ impl Git {
                 // this behaviour is tuned around a land operation, it's in
                 // general not an unreasoanble thing for a rebase, ala git
                 // rebase --interactive and fixups etc.
-                hooks.run_post_rewrite_rebase(
-                    &repo,
-                    &[(prepared_commit.oid, new_parent_oid)],
-                );
+                repo.run_post_rewrite_rebase_hooks(&[(
+                    prepared_commit.oid,
+                    new_parent_oid,
+                )]);
                 continue;
             }
             let tree = repo.find_tree(tree_oid)?;
 
             new_parent_oid = repo.commit(
-                None,
                 &commit.author(),
                 &commit.committer(),
                 String::from_utf8_lossy(commit.message_bytes()).as_ref(),
                 &tree,
                 &[&new_parent_commit],
+                RunPostRewriteRebaseHooks::Yes {
+                    prepared_commit: prepared_commit.oid,
+                },
             )?;
-            hooks.run_post_rewrite_rebase(
-                &repo,
-                &[(prepared_commit.oid, new_parent_oid)],
-            );
         }
 
         let new_oid = new_parent_oid;
@@ -238,7 +226,7 @@ impl Git {
         // straight away, they will find that it also fails because of local
         // worktree changes. Once the user has dealt with those (revert, stash
         // or commit), the rebase should work nicely.
-        repo.checkout_tree(new_commit.as_object(), None)
+        repo.checkout_tree(new_commit.as_object())
             .map_err(Error::from)
             .reword(
                 "Could not check out rebased branch - please rebase manually"
@@ -411,11 +399,11 @@ impl Git {
         let commit = repo.find_commit(oid)?;
         let base_commit = repo.find_commit(base_oid)?;
 
-        Ok(repo.cherrypick_commit(&commit, &base_commit, 0, None)?)
+        Ok(repo.cherrypick_commit(&commit, &base_commit)?)
     }
 
-    pub fn write_index(&self, mut index: git2::Index) -> Result<Oid> {
-        Ok(index.write_tree_to(&self.repo())?)
+    pub fn write_index(&self, index: git2::Index) -> Result<Oid> {
+        self.repo().write_index(index)
     }
 
     pub fn get_tree_oid_for_commit(&self, oid: Oid) -> Result<Oid> {
@@ -514,12 +502,12 @@ impl Git {
         )?;
 
         let oid = repo.commit(
-            None,
             &author,
             &committer,
             &message,
             &tree,
             &parent_refs[..],
+            RunPostRewriteRebaseHooks::No,
         )?;
 
         Ok(oid)
@@ -536,6 +524,133 @@ impl Git {
             ))
         }
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct GitRepo {
+    repo: DebugIgnore<git2::Repository>,
+    hooks: git2_ext::hooks::Hooks,
+}
+
+impl GitRepo {
+    fn new(repo: git2::Repository) -> Result<Self> {
+        let hooks = git2_ext::hooks::Hooks::with_repo(&repo)?;
+        Ok(Self {
+            repo: DebugIgnore(repo),
+            hooks,
+        })
+    }
+
+    fn head(&self) -> Result<git2::Reference> {
+        Ok(self.repo.head()?)
+    }
+
+    pub(crate) fn set_head(&self, reference: &str) -> Result<()> {
+        Ok(self.repo.set_head(reference)?)
+    }
+
+    fn signature(&self) -> Result<git2::Signature<'_>> {
+        Ok(self.repo.signature()?)
+    }
+
+    fn revwalk(&self) -> Result<git2::Revwalk> {
+        Ok(self.repo.revwalk()?)
+    }
+
+    pub(crate) fn find_commit(&self, oid: Oid) -> Result<git2::Commit> {
+        Ok(self.repo.find_commit(oid)?)
+    }
+
+    fn find_tree(&self, oid: Oid) -> Result<git2::Tree> {
+        Ok(self.repo.find_tree(oid)?)
+    }
+
+    pub(crate) fn merge_base(&self, a: Oid, b: Oid) -> Result<Oid> {
+        Ok(self.repo.merge_base(a, b)?)
+    }
+
+    fn references(&self) -> Result<git2::References> {
+        Ok(self.repo.references()?)
+    }
+
+    fn find_reference(&self, name: &str) -> Result<git2::Reference> {
+        Ok(self.repo.find_reference(name)?)
+    }
+
+    pub(crate) fn checkout_tree(&self, treeish: &git2::Object) -> Result<()> {
+        Ok(self.repo.checkout_tree(treeish, None)?)
+    }
+
+    fn commit(
+        &self,
+        author: &git2::Signature<'_>,
+        committer: &git2::Signature<'_>,
+        message: &str,
+        tree: &git2::Tree<'_>,
+        parents: &[&git2::Commit<'_>],
+        run_post_rewrite_hooks: RunPostRewriteRebaseHooks,
+    ) -> Result<Oid> {
+        let new_oid = self
+            .repo
+            .commit(None, author, committer, message, tree, parents)?;
+
+        match run_post_rewrite_hooks {
+            RunPostRewriteRebaseHooks::Yes { prepared_commit } => {
+                self.hooks.run_post_rewrite_rebase(
+                    &self.repo,
+                    &[(prepared_commit, new_oid)],
+                );
+            }
+            RunPostRewriteRebaseHooks::No => {}
+        };
+
+        Ok(new_oid)
+    }
+
+    fn run_post_rewrite_rebase_hooks(&self, changed: &[(Oid, Oid)]) {
+        self.hooks.run_post_rewrite_rebase(&self.repo, changed);
+    }
+
+    pub(crate) fn merge_commits(
+        &self,
+        our_commit: &git2::Commit<'_>,
+        their_commit: &git2::Commit<'_>,
+    ) -> Result<git2::Index> {
+        Ok(self.repo.merge_commits(our_commit, their_commit, None)?)
+    }
+
+    pub(crate) fn force_branch(
+        &self,
+        name: &str,
+        target: &git2::Commit<'_>,
+    ) -> Result<git2::Branch> {
+        Ok(self.repo.branch(name, target, true)?)
+    }
+
+    fn cherrypick_commit(
+        &self,
+        commit: &git2::Commit<'_>,
+        base: &git2::Commit<'_>,
+    ) -> Result<git2::Index> {
+        Ok(self.repo.cherrypick_commit(commit, base, 0, None)?)
+    }
+
+    fn statuses(
+        &self,
+        opts: Option<&mut git2::StatusOptions>,
+    ) -> Result<git2::Statuses<'_>> {
+        Ok(self.repo.statuses(opts)?)
+    }
+
+    fn write_index(&self, mut index: git2::Index) -> Result<Oid> {
+        Ok(index.write_tree_to(&self.repo)?)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RunPostRewriteRebaseHooks {
+    Yes { prepared_commit: Oid },
+    No,
 }
 
 #[derive(Clone, Debug)]
