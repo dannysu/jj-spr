@@ -23,6 +23,7 @@ use crate::{
 };
 use debug_ignore::DebugIgnore;
 use git2::Oid;
+use git2_ext::ops::UserSign;
 
 #[derive(Debug)]
 pub struct PreparedCommit {
@@ -530,14 +531,22 @@ impl Git {
 pub(crate) struct GitRepo {
     repo: DebugIgnore<git2::Repository>,
     hooks: git2_ext::hooks::Hooks,
+    sign: CommitSign,
 }
 
 impl GitRepo {
     fn new(repo: git2::Repository) -> Result<Self> {
         let hooks = git2_ext::hooks::Hooks::with_repo(&repo)?;
+        let config = repo
+            .config()
+            .context("failed to read repo config".to_owned())?;
+        // If commit.gpgsign is set, then attempt to obtain the signing info.
+        let sign = CommitSign::new(&repo, &config);
+
         Ok(Self {
             repo: DebugIgnore(repo),
             hooks,
+            sign,
         })
     }
 
@@ -590,9 +599,10 @@ impl GitRepo {
         parents: &[&git2::Commit<'_>],
         run_post_rewrite_hooks: RunPostRewriteRebaseHooks,
     ) -> Result<Oid> {
-        let new_oid = self
-            .repo
-            .commit(None, author, committer, message, tree, parents)?;
+        let sign = self.sign.as_dyn_sign();
+        let new_oid = git2_ext::ops::commit(
+            &self.repo, author, committer, message, tree, parents, sign,
+        )?;
 
         match run_post_rewrite_hooks {
             RunPostRewriteRebaseHooks::Yes { prepared_commit } => {
@@ -644,6 +654,43 @@ impl GitRepo {
 
     fn write_index(&self, mut index: git2::Index) -> Result<Oid> {
         Ok(index.write_tree_to(&self.repo)?)
+    }
+}
+
+#[derive(Debug)]
+enum CommitSign {
+    Enabled(DebugIgnore<UserSign>),
+    EnabledButError,
+    Disabled,
+}
+
+impl CommitSign {
+    fn new(repo: &git2::Repository, config: &git2::Config) -> Self {
+        match config.get_bool("commit.gpgsign") {
+            Ok(true) => match UserSign::from_config(&repo, &config) {
+                Ok(sign) => Self::Enabled(DebugIgnore(sign)),
+                Err(err) => {
+                    eprintln!("[spr] unable to obtain signing info: {}", err);
+                    Self::EnabledButError
+                }
+            },
+            Ok(false) => Self::Disabled,
+            Err(err) => {
+                if err.code() == git2::ErrorCode::NotFound {
+                    Self::Disabled
+                } else {
+                    eprintln!("[spr] unable to read commit.gpgsign: {}", err);
+                    Self::Disabled
+                }
+            }
+        }
+    }
+
+    fn as_dyn_sign(&self) -> Option<&dyn git2_ext::ops::Sign> {
+        match self {
+            Self::Enabled(sign) => Some(&**sign),
+            _ => None,
+        }
     }
 }
 
