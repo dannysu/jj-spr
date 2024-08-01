@@ -55,7 +55,7 @@ impl Git {
                         messages.next().cloned().unwrap_or_default();
                     for message in messages {
                         combined.push_str("\n Caused by: ");
-                        combined.push_str(&message);
+                        combined.push_str(message);
                     }
 
                     eprintln!("info: not using jj, because {}\n", combined);
@@ -399,7 +399,7 @@ impl Git {
         let commit = repo.find_commit(oid)?;
         let base_commit = repo.find_commit(base_oid)?;
 
-        Ok(repo.cherrypick_commit(&commit, &base_commit)?)
+        repo.cherrypick_commit(&commit, &base_commit)
     }
 
     pub fn write_index(&self, index: git2::Index) -> Result<Oid> {
@@ -686,11 +686,11 @@ impl JujutsuRepo {
         };
 
         // Try fetching the root from the CLI.
-        let root = cli.run_captured_with_args(&["root"])?;
+        let root = cli.run_captured_with_args(["root"])?;
         let root = Path::new(root.trim_end()).canonicalize()?;
 
         // Ensure that the root is the same.
-        if &root != repo_path {
+        if root != repo_path {
             return Err(Error::new(format!(
                 "git path {} is not colocated with jj root {}",
                 dot_git_path.display(),
@@ -722,7 +722,7 @@ impl JujutsuRepo {
                 })?;
 
             let new_message = build_commit_message(&prepared_commit.message);
-            if &new_message != &change_data.description {
+            if new_message != change_data.description {
                 let args = &[
                     "describe",
                     &change_data.change_id,
