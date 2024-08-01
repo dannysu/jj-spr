@@ -667,7 +667,7 @@ enum CommitSign {
 impl CommitSign {
     fn new(repo: &git2::Repository, config: &git2::Config) -> Self {
         match config.get_bool("commit.gpgsign") {
-            Ok(true) => match UserSign::from_config(&repo, &config) {
+            Ok(true) => match UserSign::from_config(repo, config) {
                 Ok(sign) => Self::Enabled(DebugIgnore(sign)),
                 Err(err) => {
                     eprintln!("[spr] unable to obtain signing info: {}", err);
