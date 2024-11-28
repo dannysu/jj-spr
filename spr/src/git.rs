@@ -72,12 +72,12 @@ impl Git {
         })
     }
 
-    pub(crate) fn repo(&self) -> std::sync::MutexGuard<GitRepo> {
+    pub(crate) fn lock_repo(&self) -> std::sync::MutexGuard<GitRepo> {
         self.repo.lock().expect("poisoned mutex")
     }
 
     pub fn get_commit_oids(&self, master_ref: &str) -> Result<Vec<Oid>> {
-        let repo = self.repo();
+        let repo = self.lock_repo();
         let mut walk = repo.revwalk()?;
         walk.set_sorting(git2::Sort::TOPOLOGICAL.union(git2::Sort::REVERSE))?;
         walk.push_head()?;
@@ -115,7 +115,7 @@ impl Git {
         let mut updating = false;
         let mut message: String;
         let first_parent = commits[0].parent_oid;
-        let repo = self.repo();
+        let repo = self.lock_repo();
 
         for prepared_commit in commits.iter_mut() {
             let commit = repo.find_commit(prepared_commit.oid)?;
@@ -170,7 +170,7 @@ impl Git {
         if commits.is_empty() {
             return Ok(());
         }
-        let repo = self.repo();
+        let repo = self.lock_repo();
 
         for prepared_commit in commits.iter_mut() {
             let new_parent_commit = repo.find_commit(new_parent_oid)?;
@@ -244,7 +244,7 @@ impl Git {
 
     pub fn head(&self) -> Result<Oid> {
         let oid = self
-            .repo()
+            .lock_repo()
             .head()?
             .resolve()?
             .target()
@@ -255,7 +255,7 @@ impl Git {
 
     pub fn resolve_reference(&self, reference: &str) -> Result<Oid> {
         let result = self
-            .repo()
+            .lock_repo()
             .find_reference(reference)?
             .peel_to_commit()?
             .id();
@@ -269,7 +269,7 @@ impl Git {
         remote: &str,
     ) -> Result<()> {
         let missing_commit_oids: Vec<_> = {
-            let repo = self.repo();
+            let repo = self.lock_repo();
 
             commit_oids
                 .iter()
@@ -326,7 +326,7 @@ impl Git {
         config: &Config,
         oid: Oid,
     ) -> Result<PreparedCommit> {
-        let repo = self.repo();
+        let repo = self.lock_repo();
         let commit = repo.find_commit(oid)?;
 
         if commit.parent_count() != 1 {
@@ -369,7 +369,7 @@ impl Git {
 
     pub fn get_all_ref_names(&self) -> Result<HashSet<String>> {
         let result: std::result::Result<HashSet<_>, _> = self
-            .repo()
+            .lock_repo()
             .references()?
             .names()
             .map(|r| r.map(String::from))
@@ -396,7 +396,7 @@ impl Git {
     }
 
     pub fn cherrypick(&self, oid: Oid, base_oid: Oid) -> Result<git2::Index> {
-        let repo = self.repo();
+        let repo = self.lock_repo();
         let commit = repo.find_commit(oid)?;
         let base_commit = repo.find_commit(base_oid)?;
 
@@ -404,11 +404,11 @@ impl Git {
     }
 
     pub fn write_index(&self, index: git2::Index) -> Result<Oid> {
-        self.repo().write_index(index)
+        self.lock_repo().write_index(index)
     }
 
     pub fn get_tree_oid_for_commit(&self, oid: Oid) -> Result<Oid> {
-        let tree_oid = self.repo().find_commit(oid)?.tree_id();
+        let tree_oid = self.lock_repo().find_commit(oid)?.tree_id();
 
         Ok(tree_oid)
     }
@@ -424,7 +424,7 @@ impl Git {
         let mut master_queue = VecDeque::new();
         master_ancestors.insert(master_oid);
         master_queue.push_back(master_oid);
-        let repo = self.repo();
+        let repo = self.lock_repo();
 
         while !(commit_oid.is_none() && master_queue.is_empty()) {
             if let Some(oid) = commit_oid {
@@ -463,7 +463,7 @@ impl Git {
         tree_oid: Oid,
         parent_oids: &[Oid],
     ) -> Result<Oid> {
-        let repo = self.repo();
+        let repo = self.lock_repo();
         let original_commit = repo.find_commit(original_commit_oid)?;
         let tree = repo.find_tree(tree_oid)?;
         let parents = parent_oids
@@ -517,7 +517,7 @@ impl Git {
     pub fn check_no_uncommitted_changes(&self) -> Result<()> {
         let mut opts = git2::StatusOptions::new();
         opts.include_ignored(false).include_untracked(false);
-        if self.repo().statuses(Some(&mut opts))?.is_empty() {
+        if self.lock_repo().statuses(Some(&mut opts))?.is_empty() {
             Ok(())
         } else {
             Err(Error::new(

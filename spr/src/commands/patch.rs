@@ -61,8 +61,9 @@ pub async fn patch(
 
         // The parent commit to base the new PR branch on shall be the master
         // commit this PR is based on
-        let mut pr_master_oid =
-            git.repo().merge_base(pr.head_oid, current_master_oid)?;
+        let mut pr_master_oid = git
+            .lock_repo()
+            .merge_base(pr.head_oid, current_master_oid)?;
 
         // The PR may be against master or some base branch. `pr.base_oid`
         // indicates what the PR base is, but might point to the latest commit
@@ -70,7 +71,8 @@ pub async fn patch(
         // is master, might be different from the commit the PR is actually
         // based on. But the merge base of the given `pr.base_oid` and the PR
         // head is the right commit.
-        let pr_base_oid = git.repo().merge_base(pr.head_oid, pr.base_oid)?;
+        let pr_base_oid =
+            git.lock_repo().merge_base(pr.head_oid, pr.base_oid)?;
 
         if pr_base_oid != pr_master_oid {
             // So the commit the PR is based on is not the same as the master
@@ -111,7 +113,7 @@ pub async fn patch(
         )?
     };
 
-    let repo = git.repo();
+    let repo = git.lock_repo();
     let patch_branch_commit = repo.find_commit(patch_branch_oid)?;
 
     // Create the new branch, now that we know the commit it shall point to

@@ -309,11 +309,12 @@ async fn diff_impl(
             let current_master_oid =
                 git.resolve_reference(config.master_ref.local())?;
             let pr_base_oid =
-                git.repo().merge_base(pr.head_oid, pr.base_oid)?;
+                git.lock_repo().merge_base(pr.head_oid, pr.base_oid)?;
             let pr_base_tree = git.get_tree_oid_for_commit(pr_base_oid)?;
 
-            let pr_master_base =
-                git.repo().merge_base(pr.head_oid, current_master_oid)?;
+            let pr_master_base = git
+                .lock_repo()
+                .merge_base(pr.head_oid, current_master_oid)?;
 
             (
                 pr.head_oid,
