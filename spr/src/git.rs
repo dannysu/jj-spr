@@ -48,10 +48,10 @@ impl Git {
                 eprintln!("info: using jujutsu backend");
                 Some(cli)
             }
-            Err(error) => {
+            Err(_error) => {
                 #[cfg(debug_assertions)]
                 {
-                    let mut messages = error.messages().iter();
+                    let mut messages = _error.messages().iter();
                     let mut combined =
                         messages.next().cloned().unwrap_or_default();
                     for message in messages {
