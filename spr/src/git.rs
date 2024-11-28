@@ -181,7 +181,7 @@ impl Git {
                 return Err(Error::new("Rebase failed due to merge conflicts"));
             }
 
-            let tree_oid = self.write_index(index)?;
+            let tree_oid = repo.write_index(index)?;
             if tree_oid == new_parent_commit.tree_id() {
                 // Rebasing makes this an empty commit. This is probably because
                 // we just landed this commit. So we should run a hook as this
