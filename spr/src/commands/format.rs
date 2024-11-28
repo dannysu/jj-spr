@@ -23,7 +23,7 @@ pub async fn format(
     git: &crate::git::Git,
     config: &crate::config::Config,
 ) -> Result<()> {
-    let mut pc = git.get_prepared_commits(config)?;
+    let mut pc = git.lock_and_get_prepared_commits(config)?;
 
     let len = pc.len();
     if len == 0 {
@@ -45,7 +45,7 @@ pub async fn format(
         failure = validate_commit_message(&commit.message, config).is_err()
             || failure;
     }
-    git.rewrite_commit_messages(slice, None)?;
+    git.lock_and_rewrite_commit_messages(slice, None)?;
 
     if failure {
         Err(Error::empty())

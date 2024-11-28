@@ -30,8 +30,8 @@ pub async fn land(
     gh: &mut crate::github::GitHub,
     config: &crate::config::Config,
 ) -> Result<()> {
-    git.check_no_uncommitted_changes()?;
-    let mut prepared_commits = git.get_prepared_commits(config)?;
+    git.lock_and_check_no_uncommitted_changes()?;
+    let mut prepared_commits = git.lock_and_get_prepared_commits(config)?;
 
     let based_on_unlanded_commits = prepared_commits.len() > 1;
 
@@ -96,9 +96,10 @@ pub async fn land(
     .await
     .reword("git fetch failed".to_string())?;
 
-    let current_master = git.resolve_reference(config.master_ref.local())?;
+    let current_master =
+        git.lock_and_resolve_reference(config.master_ref.local())?;
     let base_is_master = pull_request.base.is_master_branch();
-    let index = git.cherrypick(prepared_commit.oid, current_master)?;
+    let index = git.lock_and_cherrypick(prepared_commit.oid, current_master)?;
 
     if index.has_conflicts() {
         return Err(Error::new(formatdoc!(
@@ -117,12 +118,12 @@ pub async fn land(
 
     // This is the tree we are getting from cherrypicking the local commit
     // on the selected base (master or stacked-on Pull Request).
-    let our_tree_oid = git.write_index(index)?;
+    let our_tree_oid = git.lock_and_write_index(index)?;
 
     // Now let's predict what merging the PR into the master branch would
     // produce.
     let merge_index = {
-        let repo = git.repo();
+        let repo = git.lock_repo();
         let current_master = repo.find_commit(current_master)?;
         let pr_head = repo.find_commit(pull_request.head_oid)?;
         repo.merge_commits(&current_master, &pr_head)
@@ -131,7 +132,7 @@ pub async fn land(
     let merge_matches_cherrypick = if merge_index.has_conflicts() {
         false
     } else {
-        let merge_tree_oid = git.write_index(merge_index)?;
+        let merge_tree_oid = git.lock_and_write_index(merge_index)?;
         merge_tree_oid == our_tree_oid
     };
 
@@ -180,14 +181,15 @@ pub async fn land(
         // above from the cherry-picking of this commit on master.
 
         // The commit on the base branch that the PR branch is currently based on
-        let pr_base_oid =
-            git.repo().merge_base(pr_head_oid, pull_request.base_oid)?;
-        let pr_base_tree = git.get_tree_oid_for_commit(pr_base_oid)?;
+        let pr_base_oid = git
+            .lock_repo()
+            .merge_base(pr_head_oid, pull_request.base_oid)?;
+        let pr_base_tree = git.lock_and_get_tree_oid_for_commit(pr_base_oid)?;
 
         let pr_master_base =
-            git.repo().merge_base(pr_base_oid, current_master)?;
+            git.lock_repo().merge_base(pr_base_oid, current_master)?;
         let pr_master_base_tree =
-            git.get_tree_oid_for_commit(pr_master_base)?;
+            git.lock_and_get_tree_oid_for_commit(pr_master_base)?;
 
         if pr_base_tree != pr_master_base_tree {
             // So the current file contents of the base branch are not the same
@@ -202,7 +204,7 @@ pub async fn land(
             // Here comes the additional merge-in-master commit on the Pull
             // Request branch that achieves that!
 
-            pr_head_oid = git.create_derived_commit(
+            pr_head_oid = git.lock_and_create_derived_commit(
                 pr_head_oid,
                 &format!(
                     "[spr] landed version\n\nCreated using spr {}",
@@ -267,13 +269,15 @@ pub async fn land(
             }
 
             if let Some(merge_commit) = mergeability.merge_commit {
-                git.fetch_commits_from_remote(
+                git.lock_and_fetch_commits_from_remote(
                     &[merge_commit],
                     &config.remote_name,
                 )
                 .await?;
 
-                if git.get_tree_oid_for_commit(merge_commit)? != our_tree_oid {
+                if git.lock_and_get_tree_oid_for_commit(merge_commit)?
+                    != our_tree_oid
+                {
                     return Err(Error::new(formatdoc!(
                     "This commit has been updated and/or rebased since the pull
                      request was last updated. Please run `spr diff` to update the pull
@@ -410,7 +414,7 @@ pub async fn land(
                 return Err(Error::new("git fetch failed"));
             }
         }
-        git.rebase_commits(
+        git.lock_and_rebase_commits(
             &mut prepared_commits[..],
             git2::Oid::from_str(&sha)?,
         )

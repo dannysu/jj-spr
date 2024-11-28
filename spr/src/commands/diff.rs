@@ -54,12 +54,12 @@ pub async fn diff(
     config: &crate::config::Config,
 ) -> Result<()> {
     // Abort right here if the local Git repository is not clean
-    git.check_no_uncommitted_changes()?;
+    git.lock_and_check_no_uncommitted_changes()?;
 
     let mut result = Ok(());
 
     // Look up the commits on the local branch
-    let mut prepared_commits = git.get_prepared_commits(config)?;
+    let mut prepared_commits = git.lock_and_get_prepared_commits(config)?;
 
     // The parent of the first commit in the list is the commit on master that
     // the local branch is based on
@@ -123,7 +123,10 @@ pub async fn diff(
     // changed by the implementation)
     add_error(
         &mut result,
-        git.rewrite_commit_messages(prepared_commits.as_mut_slice(), None),
+        git.lock_and_rewrite_commit_messages(
+            prepared_commits.as_mut_slice(),
+            None,
+        ),
     );
 
     result
@@ -148,39 +151,42 @@ async fn diff_impl(
 
     // Determine the trees the Pull Request branch and the base branch should
     // have when we're done here.
-    let (new_head_tree, new_base_tree) = if !opts.cherry_pick
-        || directly_based_on_master
-    {
-        // Unless the user tells us to --cherry-pick, these should be the trees
-        // of the current commit and its parent.
-        // If the current commit is directly based on master (i.e.
-        // directly_based_on_master is true), then we can do this here even when
-        // the user tells us to --cherry-pick, because we would cherry pick the
-        // current commit onto its parent, which gives us the same tree as the
-        // current commit has, and the master base is the same as this commit's
-        // parent.
-        let head_tree = git.get_tree_oid_for_commit(local_commit.oid)?;
-        let base_tree = git.get_tree_oid_for_commit(local_commit.parent_oid)?;
+    let (new_head_tree, new_base_tree) =
+        if !opts.cherry_pick || directly_based_on_master {
+            // Unless the user tells us to --cherry-pick, these should be the trees
+            // of the current commit and its parent.
+            // If the current commit is directly based on master (i.e.
+            // directly_based_on_master is true), then we can do this here even when
+            // the user tells us to --cherry-pick, because we would cherry pick the
+            // current commit onto its parent, which gives us the same tree as the
+            // current commit has, and the master base is the same as this commit's
+            // parent.
+            let head_tree =
+                git.lock_and_get_tree_oid_for_commit(local_commit.oid)?;
+            let base_tree =
+                git.lock_and_get_tree_oid_for_commit(local_commit.parent_oid)?;
 
-        (head_tree, base_tree)
-    } else {
-        // Cherry-pick the current commit onto master
-        let index = git.cherrypick(local_commit.oid, master_base_oid)?;
+            (head_tree, base_tree)
+        } else {
+            // Cherry-pick the current commit onto master
+            let index =
+                git.lock_and_cherrypick(local_commit.oid, master_base_oid)?;
 
-        if index.has_conflicts() {
-            return Err(Error::new(formatdoc!(
-                "This commit cannot be cherry-picked on {master}.",
-                master = config.master_ref.branch_name(),
-            )));
-        }
+            if index.has_conflicts() {
+                return Err(Error::new(formatdoc!(
+                    "This commit cannot be cherry-picked on {master}.",
+                    master = config.master_ref.branch_name(),
+                )));
+            }
 
-        // This is the tree we are getting from cherrypicking the local commit
-        // on master.
-        let cherry_pick_tree = git.write_index(index)?;
-        let master_tree = git.get_tree_oid_for_commit(master_base_oid)?;
+            // This is the tree we are getting from cherrypicking the local commit
+            // on master.
+            let cherry_pick_tree = git.lock_and_write_index(index)?;
+            let master_tree =
+                git.lock_and_get_tree_oid_for_commit(master_base_oid)?;
 
-        (cherry_pick_tree, master_tree)
-    };
+            (cherry_pick_tree, master_tree)
+        };
 
     if let Some(number) = local_commit.pull_request_number {
         output(
@@ -293,7 +299,8 @@ async fn diff_impl(
     let pull_request_branch = match &pull_request {
         Some(pr) => pr.head.clone(),
         None => config.new_github_branch(
-            &config.get_new_branch_name(&git.get_all_ref_names()?, title),
+            &config
+                .get_new_branch_name(&git.lock_and_get_all_ref_names()?, title),
         ),
     };
 
@@ -304,13 +311,15 @@ async fn diff_impl(
     // values.
     let (pr_head_oid, pr_head_tree, pr_base_oid, pr_base_tree, pr_master_base) =
         if let Some(pr) = &pull_request {
-            let pr_head_tree = git.get_tree_oid_for_commit(pr.head_oid)?;
+            let pr_head_tree =
+                git.lock_and_get_tree_oid_for_commit(pr.head_oid)?;
 
             let current_master_oid =
-                git.resolve_reference(config.master_ref.local())?;
+                git.lock_and_resolve_reference(config.master_ref.local())?;
             let pr_base_oid =
                 git.lock_repo().merge_base(pr.head_oid, pr.base_oid)?;
-            let pr_base_tree = git.get_tree_oid_for_commit(pr_base_oid)?;
+            let pr_base_tree =
+                git.lock_and_get_tree_oid_for_commit(pr_base_oid)?;
 
             let pr_master_base = git
                 .lock_repo()
@@ -325,7 +334,7 @@ async fn diff_impl(
             )
         } else {
             let master_base_tree =
-                git.get_tree_oid_for_commit(master_base_oid)?;
+                git.lock_and_get_tree_oid_for_commit(master_base_oid)?;
             (
                 master_base_oid,
                 master_base_tree,
@@ -423,62 +432,62 @@ async fn diff_impl(
     // commit is not directly based on master, we have to create this new PR
     // with a base branch, so that is case 3.
 
-    let (pr_base_parent, base_branch) = if pr_base_tree == new_base_tree
-        && !needs_merging_master
-    {
-        // Case 1
-        (None, base_branch)
-    } else if base_branch.is_none()
-        && (directly_based_on_master || opts.cherry_pick)
-    {
-        // Case 2
-        (Some(master_base_oid), None)
-    } else {
-        // Case 3
-
-        // We are constructing a base branch commit.
-        // One parent of the new base branch commit will be the current base
-        // commit, that could be either the top commit of an existing base
-        // branch, or a commit on master.
-        let mut parents = vec![pr_base_oid];
-
-        // If we need to rebase on master, make the master commit also a
-        // parent (except if the first parent is that same commit, we don't
-        // want duplicates in `parents`).
-        if needs_merging_master && pr_base_oid != master_base_oid {
-            parents.push(master_base_oid);
-        }
-
-        let new_base_branch_commit = git.create_derived_commit(
-            local_commit.parent_oid,
-            &format!(
-                "[spr] {}\n\nCreated using spr {}\n\n[skip ci]",
-                if pull_request.is_some() {
-                    "changes introduced through rebase".to_string()
-                } else {
-                    format!(
-                        "changes to {} this commit is based on",
-                        config.master_ref.branch_name()
-                    )
-                },
-                env!("CARGO_PKG_VERSION"),
-            ),
-            new_base_tree,
-            &parents[..],
-        )?;
-
-        // If `base_branch` is `None` (which means a base branch does not exist
-        // yet), then make a `GitHubBranch` with a new name for a base branch
-        let base_branch = if let Some(base_branch) = base_branch {
-            base_branch
+    let (pr_base_parent, base_branch) =
+        if pr_base_tree == new_base_tree && !needs_merging_master {
+            // Case 1
+            (None, base_branch)
+        } else if base_branch.is_none()
+            && (directly_based_on_master || opts.cherry_pick)
+        {
+            // Case 2
+            (Some(master_base_oid), None)
         } else {
-            config.new_github_branch(
-                &config.get_base_branch_name(&git.get_all_ref_names()?, title),
-            )
-        };
+            // Case 3
 
-        (Some(new_base_branch_commit), Some(base_branch))
-    };
+            // We are constructing a base branch commit.
+            // One parent of the new base branch commit will be the current base
+            // commit, that could be either the top commit of an existing base
+            // branch, or a commit on master.
+            let mut parents = vec![pr_base_oid];
+
+            // If we need to rebase on master, make the master commit also a
+            // parent (except if the first parent is that same commit, we don't
+            // want duplicates in `parents`).
+            if needs_merging_master && pr_base_oid != master_base_oid {
+                parents.push(master_base_oid);
+            }
+
+            let new_base_branch_commit = git.lock_and_create_derived_commit(
+                local_commit.parent_oid,
+                &format!(
+                    "[spr] {}\n\nCreated using spr {}\n\n[skip ci]",
+                    if pull_request.is_some() {
+                        "changes introduced through rebase".to_string()
+                    } else {
+                        format!(
+                            "changes to {} this commit is based on",
+                            config.master_ref.branch_name()
+                        )
+                    },
+                    env!("CARGO_PKG_VERSION"),
+                ),
+                new_base_tree,
+                &parents[..],
+            )?;
+
+            // If `base_branch` is `None` (which means a base branch does not exist
+            // yet), then make a `GitHubBranch` with a new name for a base branch
+            let base_branch = if let Some(base_branch) = base_branch {
+                base_branch
+            } else {
+                config.new_github_branch(&config.get_base_branch_name(
+                    &git.lock_and_get_all_ref_names()?,
+                    title,
+                ))
+            };
+
+            (Some(new_base_branch_commit), Some(base_branch))
+        };
 
     let mut github_commit_message = opts.message.clone();
     if pull_request.is_some() && github_commit_message.is_none() {
@@ -519,7 +528,7 @@ async fn diff_impl(
     }
 
     // Create the new commit
-    let pr_commit = git.create_derived_commit(
+    let pr_commit = git.lock_and_create_derived_commit(
         local_commit.oid,
         &format!(
             "{}\n\nCreated using spr {}",

@@ -203,8 +203,8 @@ impl GitHub {
 
         Git::fetch_from_remote(&[&head, &base], &config.remote_name).await?;
 
-        let base_oid = git.resolve_reference(base.local())?;
-        let head_oid = git.resolve_reference(head.local())?;
+        let base_oid = git.lock_and_resolve_reference(base.local())?;
+        let head_oid = git.lock_and_resolve_reference(head.local())?;
 
         let mut sections = parse_message(&pr.body, MessageSection::Summary);
 

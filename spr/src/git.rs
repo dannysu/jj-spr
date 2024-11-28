@@ -76,7 +76,10 @@ impl Git {
         self.repo.lock().expect("poisoned mutex")
     }
 
-    pub fn get_commit_oids(&self, master_ref: &str) -> Result<Vec<Oid>> {
+    pub fn lock_and_get_commit_oids(
+        &self,
+        master_ref: &str,
+    ) -> Result<Vec<Oid>> {
         let repo = self.lock_repo();
         let mut walk = repo.revwalk()?;
         walk.set_sorting(git2::Sort::TOPOLOGICAL.union(git2::Sort::REVERSE))?;
@@ -86,17 +89,18 @@ impl Git {
         Ok(walk.collect::<std::result::Result<Vec<Oid>, _>>()?)
     }
 
-    pub fn get_prepared_commits(
+    pub fn lock_and_get_prepared_commits(
         &self,
         config: &Config,
     ) -> Result<Vec<PreparedCommit>> {
-        self.get_commit_oids(config.master_ref.local())?
+        // TODO: This should probably acquire the lock once, not over and over.
+        self.lock_and_get_commit_oids(config.master_ref.local())?
             .into_iter()
-            .map(|oid| self.prepare_commit(config, oid))
+            .map(|oid| self.lock_and_prepare_commit(config, oid))
             .collect()
     }
 
-    pub fn rewrite_commit_messages(
+    pub fn lock_and_rewrite_commit_messages(
         &self,
         commits: &mut [PreparedCommit],
         mut limit: Option<usize>,
@@ -162,7 +166,7 @@ impl Git {
         Ok(())
     }
 
-    pub fn rebase_commits(
+    pub fn lock_and_rebase_commits(
         &self,
         commits: &mut [PreparedCommit],
         mut new_parent_oid: git2::Oid,
@@ -242,7 +246,7 @@ impl Git {
         Ok(())
     }
 
-    pub fn head(&self) -> Result<Oid> {
+    pub fn lock_and_get_head(&self) -> Result<Oid> {
         let oid = self
             .lock_repo()
             .head()?
@@ -253,7 +257,7 @@ impl Git {
         Ok(oid)
     }
 
-    pub fn resolve_reference(&self, reference: &str) -> Result<Oid> {
+    pub fn lock_and_resolve_reference(&self, reference: &str) -> Result<Oid> {
         let result = self
             .lock_repo()
             .find_reference(reference)?
@@ -263,7 +267,7 @@ impl Git {
         Ok(result)
     }
 
-    pub async fn fetch_commits_from_remote(
+    pub async fn lock_and_fetch_commits_from_remote(
         &self,
         commit_oids: &[git2::Oid],
         remote: &str,
@@ -321,7 +325,7 @@ impl Git {
         Ok(())
     }
 
-    pub fn prepare_commit(
+    pub fn lock_and_prepare_commit(
         &self,
         config: &Config,
         oid: Oid,
@@ -367,7 +371,7 @@ impl Git {
         })
     }
 
-    pub fn get_all_ref_names(&self) -> Result<HashSet<String>> {
+    pub fn lock_and_get_all_ref_names(&self) -> Result<HashSet<String>> {
         let result: std::result::Result<HashSet<_>, _> = self
             .lock_repo()
             .references()?
@@ -378,8 +382,11 @@ impl Git {
         Ok(result?)
     }
 
-    pub fn get_pr_patch_branch_name(&self, pr_number: u64) -> Result<String> {
-        let ref_names = self.get_all_ref_names()?;
+    pub fn lock_and_get_pr_patch_branch_name(
+        &self,
+        pr_number: u64,
+    ) -> Result<String> {
+        let ref_names = self.lock_and_get_all_ref_names()?;
         let default_name = format!("PR-{}", pr_number);
         if !ref_names.contains(&format!("refs/heads/{}", default_name)) {
             return Ok(default_name);
@@ -395,7 +402,11 @@ impl Git {
         }
     }
 
-    pub fn cherrypick(&self, oid: Oid, base_oid: Oid) -> Result<git2::Index> {
+    pub fn lock_and_cherrypick(
+        &self,
+        oid: Oid,
+        base_oid: Oid,
+    ) -> Result<git2::Index> {
         let repo = self.lock_repo();
         let commit = repo.find_commit(oid)?;
         let base_commit = repo.find_commit(base_oid)?;
@@ -403,17 +414,17 @@ impl Git {
         repo.cherrypick_commit(&commit, &base_commit)
     }
 
-    pub fn write_index(&self, index: git2::Index) -> Result<Oid> {
+    pub fn lock_and_write_index(&self, index: git2::Index) -> Result<Oid> {
         self.lock_repo().write_index(index)
     }
 
-    pub fn get_tree_oid_for_commit(&self, oid: Oid) -> Result<Oid> {
+    pub fn lock_and_get_tree_oid_for_commit(&self, oid: Oid) -> Result<Oid> {
         let tree_oid = self.lock_repo().find_commit(oid)?.tree_id();
 
         Ok(tree_oid)
     }
 
-    pub fn find_master_base(
+    pub fn lock_and_find_master_base(
         &self,
         commit_oid: Oid,
         master_oid: Oid,
@@ -456,7 +467,7 @@ impl Git {
         Ok(None)
     }
 
-    pub fn create_derived_commit(
+    pub fn lock_and_create_derived_commit(
         &self,
         original_commit_oid: Oid,
         message: &str,
@@ -514,7 +525,7 @@ impl Git {
         Ok(oid)
     }
 
-    pub fn check_no_uncommitted_changes(&self) -> Result<()> {
+    pub fn lock_and_check_no_uncommitted_changes(&self) -> Result<()> {
         let mut opts = git2::StatusOptions::new();
         opts.include_ignored(false).include_untracked(false);
         if self.lock_repo().statuses(Some(&mut opts))?.is_empty() {

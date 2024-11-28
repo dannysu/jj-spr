@@ -32,7 +32,7 @@ pub async fn close(
 ) -> Result<()> {
     let mut result = Ok(());
 
-    let mut prepared_commits = git.get_prepared_commits(config)?;
+    let mut prepared_commits = git.lock_and_get_prepared_commits(config)?;
 
     if prepared_commits.is_empty() {
         output("👋", "Branch is empty - nothing to do. Good bye!")?;
@@ -63,7 +63,10 @@ pub async fn close(
     // changed by the implementation)
     add_error(
         &mut result,
-        git.rewrite_commit_messages(prepared_commits.as_mut_slice(), None),
+        git.lock_and_rewrite_commit_messages(
+            prepared_commits.as_mut_slice(),
+            None,
+        ),
     );
 
     result

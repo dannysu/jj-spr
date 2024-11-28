@@ -47,7 +47,7 @@ pub async fn patch(
     let branch_name = if let Some(name) = opts.branch_name {
         name
     } else {
-        git.get_pr_patch_branch_name(pr.number)?
+        git.lock_and_get_pr_patch_branch_name(pr.number)?
     };
 
     let patch_branch_oid = if let Some(oid) = pr.merge_commit {
@@ -57,7 +57,7 @@ pub async fn patch(
     } else {
         // Current oid of the master branch
         let current_master_oid =
-            git.resolve_reference(config.master_ref.local())?;
+            git.lock_and_resolve_reference(config.master_ref.local())?;
 
         // The parent commit to base the new PR branch on shall be the master
         // commit this PR is based on
@@ -84,8 +84,10 @@ pub async fn patch(
             // base, the base commit we construct here would turn out to be
             // empty. No point in creating an empty commit, so let's first check
             // whether base tree and master tree are different.
-            let pr_base_tree = git.get_tree_oid_for_commit(pr.base_oid)?;
-            let master_tree = git.get_tree_oid_for_commit(pr_master_oid)?;
+            let pr_base_tree =
+                git.lock_and_get_tree_oid_for_commit(pr.base_oid)?;
+            let master_tree =
+                git.lock_and_get_tree_oid_for_commit(pr_master_oid)?;
 
             if pr_base_tree != master_tree {
                 // The base of this PR is not on master. We need to create two
@@ -93,7 +95,7 @@ pub async fn patch(
                 // represents the base of the PR. And then second, the commit
                 // that represents the contents of the PR.
 
-                pr_master_oid = git.create_derived_commit(
+                pr_master_oid = git.lock_and_create_derived_commit(
                     pr_base_oid,
                     &format!("[spr] Base of Pull Request #{}", pr.number),
                     pr_base_tree,
@@ -105,10 +107,10 @@ pub async fn patch(
         // Create the main commit for the patch branch. This is based on a
         // master commit, or, if the PR can't be based on master directly, on
         // the commit we created above to prepare the base of this commit.
-        git.create_derived_commit(
+        git.lock_and_create_derived_commit(
             pr.head_oid,
             &build_commit_message(&pr.sections),
-            git.get_tree_oid_for_commit(pr.head_oid)?,
+            git.lock_and_get_tree_oid_for_commit(pr.head_oid)?,
             &[pr_master_oid],
         )?
     };
