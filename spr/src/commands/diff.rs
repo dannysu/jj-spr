@@ -9,7 +9,6 @@ use std::iter::zip;
 
 use crate::{
     error::{add_error, Error, Result, ResultExt},
-    git::PreparedCommit,
     github::{
         GitHub, PullRequest, PullRequestRequestReviewers, PullRequestState,
         PullRequestUpdate,
@@ -23,7 +22,7 @@ use indoc::{formatdoc, indoc};
 
 #[derive(Debug, clap::Parser)]
 pub struct DiffOptions {
-    /// Create/update pull requests for the whole branch, not just the HEAD commit
+    /// Create/update pull requests for commits in range from base to revision
     #[clap(long, short = 'a')]
     all: bool,
 
@@ -46,48 +45,46 @@ pub struct DiffOptions {
     #[clap(long)]
     cherry_pick: bool,
 
-    /// Jujutsu revision to use instead of HEAD (only applicable in Jujutsu repositories)
+    /// Base revision for --all mode (if not specified, uses trunk)
     #[clap(long)]
-    revision: Option<String>,
+    base: Option<String>,
 }
 
 pub async fn diff(
     opts: DiffOptions,
-    git: &crate::git::Git,
+    jj: &crate::jj::Jujutsu,
     gh: &mut crate::github::GitHub,
     config: &crate::config::Config,
+    revision: &str,
 ) -> Result<()> {
-    // Abort right here if the local Git repository is not clean
-    git.lock_and_check_no_uncommitted_changes()?;
+    // Abort right here if the local Jujutsu repository is not clean
+    jj.check_no_uncommitted_changes()?;
 
     let mut result = Ok(());
 
-    // Look up the commits on the local branch (or specific revision if provided)
-    let mut prepared_commits = git.lock_and_get_prepared_commits_for_revision(
-        config,
-        opts.revision.as_deref(),
-    )?;
+    // Get commits to process
+    let mut prepared_commits = if opts.all {
+        // Get range of commits from base to revision
+        let base = opts.base.as_deref().unwrap_or("trunk()");
+        jj.get_prepared_commits_from_to(config, base, revision)?
+    } else {
+        // Just get the single specified revision
+        vec![jj.get_prepared_commit_for_revision(config, revision)?]
+    };
 
     // The parent of the first commit in the list is the commit on master that
     // the local branch is based on
     let master_base_oid = if let Some(first_commit) = prepared_commits.first() {
         first_commit.parent_oid
     } else {
-        output("👋", "Branch is empty - nothing to do. Good bye!")?;
+        output("👋", "No commits found - nothing to do. Good bye!")?;
         return result;
     };
-
-    if !opts.all && opts.revision.is_none() {
-        // Remove all prepared commits from the vector but the last. So, if
-        // `--all` is not given and no specific revision is specified, we only operate on the HEAD commit.
-        prepared_commits.drain(0..prepared_commits.len() - 1);
-    }
-    // Note: If --revision is specified, we already have only one commit, so --all is ignored
 
     #[allow(clippy::needless_collect)]
     let pull_request_tasks: Vec<_> = prepared_commits
         .iter()
-        .map(|pc: &PreparedCommit| {
+        .map(|pc: &crate::jj::PreparedCommit| {
             pc.pull_request_number
                 .map(|number| tokio::spawn(gh.clone().get_pull_request(number)))
         })
@@ -117,7 +114,7 @@ pub async fn diff(
         result = diff_impl(
             &opts,
             &mut message_on_prompt,
-            git,
+            jj,
             gh,
             config,
             prepared_commit,
@@ -127,14 +124,11 @@ pub async fn diff(
         .await;
     }
 
-    // This updates the commit message in the local Git repository (if it was
+    // This updates the commit message in the local Jujutsu repository (if it was
     // changed by the implementation)
     add_error(
         &mut result,
-        git.lock_and_rewrite_commit_messages(
-            prepared_commits.as_mut_slice(),
-            None,
-        ),
+        jj.rewrite_commit_messages(prepared_commits.as_mut_slice()),
     );
 
     result
@@ -144,10 +138,10 @@ pub async fn diff(
 async fn diff_impl(
     opts: &DiffOptions,
     message_on_prompt: &mut String,
-    git: &crate::git::Git,
+    jj: &crate::jj::Jujutsu,
     gh: &mut crate::github::GitHub,
     config: &crate::config::Config,
-    local_commit: &mut PreparedCommit,
+    local_commit: &mut crate::jj::PreparedCommit,
     master_base_oid: Oid,
     pull_request: Option<PullRequest>,
 ) -> Result<()> {
@@ -169,16 +163,13 @@ async fn diff_impl(
             // current commit onto its parent, which gives us the same tree as the
             // current commit has, and the master base is the same as this commit's
             // parent.
-            let head_tree =
-                git.lock_and_get_tree_oid_for_commit(local_commit.oid)?;
-            let base_tree =
-                git.lock_and_get_tree_oid_for_commit(local_commit.parent_oid)?;
+            let head_tree = jj.get_tree_oid_for_commit(local_commit.oid)?;
+            let base_tree = jj.get_tree_oid_for_commit(local_commit.parent_oid)?;
 
             (head_tree, base_tree)
         } else {
             // Cherry-pick the current commit onto master
-            let index =
-                git.lock_and_cherrypick(local_commit.oid, master_base_oid)?;
+            let index = jj.cherrypick(local_commit.oid, master_base_oid)?;
 
             if index.has_conflicts() {
                 return Err(Error::new(formatdoc!(
@@ -189,9 +180,8 @@ async fn diff_impl(
 
             // This is the tree we are getting from cherrypicking the local commit
             // on master.
-            let cherry_pick_tree = git.lock_and_write_index(index)?;
-            let master_tree =
-                git.lock_and_get_tree_oid_for_commit(master_base_oid)?;
+            let cherry_pick_tree = jj.write_index(index)?;
+            let master_tree = jj.get_tree_oid_for_commit(master_base_oid)?;
 
             (cherry_pick_tree, master_tree)
         };
@@ -308,7 +298,7 @@ async fn diff_impl(
         Some(pr) => pr.head.clone(),
         None => config.new_github_branch(
             &config
-                .get_new_branch_name(&git.lock_and_get_all_ref_names()?, title),
+                .get_new_branch_name(&jj.get_all_ref_names()?, title),
         ),
     };
 
@@ -319,19 +309,14 @@ async fn diff_impl(
     // values.
     let (pr_head_oid, pr_head_tree, pr_base_oid, pr_base_tree, pr_master_base) =
         if let Some(pr) = &pull_request {
-            let pr_head_tree =
-                git.lock_and_get_tree_oid_for_commit(pr.head_oid)?;
+            let pr_head_tree = jj.get_tree_oid_for_commit(pr.head_oid)?;
 
-            let current_master_oid =
-                git.lock_and_resolve_reference(config.master_ref.local())?;
-            let pr_base_oid =
-                git.lock_repo().merge_base(pr.head_oid, pr.base_oid)?;
-            let pr_base_tree =
-                git.lock_and_get_tree_oid_for_commit(pr_base_oid)?;
+            let current_master_oid = jj.resolve_reference(config.master_ref.local())?;
+            // Use git for merge base calculation since jj doesn't expose this directly
+            let pr_base_oid = jj.git_repo.merge_base(pr.head_oid, pr.base_oid)?;
+            let pr_base_tree = jj.get_tree_oid_for_commit(pr_base_oid)?;
 
-            let pr_master_base = git
-                .lock_repo()
-                .merge_base(pr.head_oid, current_master_oid)?;
+            let pr_master_base = jj.git_repo.merge_base(pr.head_oid, current_master_oid)?;
 
             (
                 pr.head_oid,
@@ -341,8 +326,7 @@ async fn diff_impl(
                 pr_master_base,
             )
         } else {
-            let master_base_tree =
-                git.lock_and_get_tree_oid_for_commit(master_base_oid)?;
+            let master_base_tree = jj.get_tree_oid_for_commit(master_base_oid)?;
             (
                 master_base_oid,
                 master_base_tree,
@@ -465,10 +449,10 @@ async fn diff_impl(
                 parents.push(master_base_oid);
             }
 
-            let new_base_branch_commit = git.lock_and_create_derived_commit(
+            let new_base_branch_commit = jj.create_derived_commit(
                 local_commit.parent_oid,
                 &format!(
-                    "[spr] {}\n\nCreated using spr {}\n\n[skip ci]",
+                    "[spr] {}\n\nCreated using jj-spr {}\n\n[skip ci]",
                     if pull_request.is_some() {
                         "changes introduced through rebase".to_string()
                     } else {
@@ -489,7 +473,7 @@ async fn diff_impl(
                 base_branch
             } else {
                 config.new_github_branch(&config.get_base_branch_name(
-                    &git.lock_and_get_all_ref_names()?,
+                    &jj.get_all_ref_names()?,
                     title,
                 ))
             };
@@ -536,14 +520,14 @@ async fn diff_impl(
     }
 
     // Create the new commit
-    let pr_commit = git.lock_and_create_derived_commit(
+    let pr_commit = jj.create_derived_commit(
         local_commit.oid,
         &format!(
-            "{}\n\nCreated using spr {}",
+            "{}\n\nCreated using jj-spr {}",
             github_commit_message
                 .as_ref()
                 .map(|s| &s[..])
-                .unwrap_or("[spr] initial version"),
+                .unwrap_or("[jj-spr] initial version"),
             env!("CARGO_PKG_VERSION"),
         ),
         new_head_tree,
@@ -767,7 +751,7 @@ mod tests {
             draft: false,
             message: None,
             cherry_pick: false,
-            revision: None,
+            base: None,
         };
 
         assert!(!opts.all);
@@ -775,80 +759,73 @@ mod tests {
         assert!(!opts.draft);
         assert!(!opts.cherry_pick);
         assert!(opts.message.is_none());
-        assert!(opts.revision.is_none());
+        assert!(opts.base.is_none());
     }
 
     #[test]
-    fn test_diff_options_with_revision() {
+    fn test_diff_options_with_base() {
         let opts = DiffOptions {
-            all: false,
-            update_message: false,
-            draft: false,
-            message: None,
-            cherry_pick: false,
-            revision: Some("test_revision".to_string()),
-        };
-
-        assert_eq!(opts.revision, Some("test_revision".to_string()));
-    }
-
-    #[test]
-    fn test_diff_git_integration() {
-        let (_temp_dir, repo) = create_test_git_repo();
-        let git = crate::git::Git::new(repo).expect("Failed to create Git instance");
-        let config = create_test_config();
-
-        // Test that we can create Git instance and config for diff operations
-        // The actual diff function would require GitHub setup, so we test components
-        assert_eq!(config.owner, "test_owner");
-        assert_eq!(config.remote_name, "origin");
-        
-        // Test that we can successfully create Git wrapper
-        let _commit_oids = git.lock_and_get_commit_oids("refs/heads/main");
-        // This may fail in test but shows the interface works
-    }
-
-    #[test]
-    fn test_revision_option_parsing() {
-        // Test that the revision option can be parsed correctly
-        let opts_with_revision = DiffOptions {
-            all: false,
-            update_message: false,
-            draft: false,
-            message: None,
-            cherry_pick: false,
-            revision: Some("@".to_string()), // Common Jujutsu revision
-        };
-
-        assert_eq!(opts_with_revision.revision.as_deref(), Some("@"));
-
-        let opts_with_specific_revision = DiffOptions {
-            all: false,
-            update_message: false,
-            draft: false,
-            message: None,
-            cherry_pick: false,
-            revision: Some("main".to_string()),
-        };
-
-        assert_eq!(opts_with_specific_revision.revision.as_deref(), Some("main"));
-    }
-
-    #[test]
-    fn test_revision_behavior_with_all_flag() {
-        let opts_with_both = DiffOptions {
             all: true,
             update_message: false,
             draft: false,
             message: None,
             cherry_pick: false,
-            revision: Some("@".to_string()),
+            base: Some("main".to_string()),
         };
 
-        // When revision is specified, --all should be ignored
-        // This logic is tested in the actual diff function at lines 80-85
-        assert!(opts_with_both.all);
-        assert!(opts_with_both.revision.is_some());
+        assert_eq!(opts.base, Some("main".to_string()));
+        assert!(opts.all);
+    }
+
+    #[test]
+    fn test_jujutsu_integration() {
+        // Test configuration for jj-spr
+        let config = create_test_config();
+        assert_eq!(config.owner, "test_owner");
+        assert_eq!(config.remote_name, "origin");
+    }
+
+    #[test]
+    fn test_base_option_parsing() {
+        // Test that the base option can be parsed correctly
+        let opts_with_base = DiffOptions {
+            all: true,
+            update_message: false,
+            draft: false,
+            message: None,
+            cherry_pick: false,
+            base: Some("main".to_string()),
+        };
+
+        assert_eq!(opts_with_base.base.as_deref(), Some("main"));
+        assert!(opts_with_base.all);
+
+        let opts_with_trunk = DiffOptions {
+            all: true,
+            update_message: false,
+            draft: false,
+            message: None,
+            cherry_pick: false,
+            base: Some("trunk()".to_string()),
+        };
+
+        assert_eq!(opts_with_trunk.base.as_deref(), Some("trunk()"));
+    }
+
+    #[test]
+    fn test_all_flag_behavior() {
+        let opts_with_all = DiffOptions {
+            all: true,
+            update_message: false,
+            draft: false,
+            message: None,
+            cherry_pick: false,
+            base: Some("trunk()".to_string()),
+        };
+
+        // When --all is specified, it should work with base revisions
+        assert!(opts_with_all.all);
+        assert!(opts_with_all.base.is_some());
     }
 
     #[test]
@@ -860,7 +837,7 @@ mod tests {
             draft: true,
             message: Some("Update message".to_string()),
             cherry_pick: false,
-            revision: Some("@".to_string()),
+            base: Some("trunk()".to_string()),
         };
 
         assert!(opts.all);
@@ -868,7 +845,7 @@ mod tests {
         assert!(opts.draft);
         assert_eq!(opts.message.as_deref(), Some("Update message"));
         assert!(!opts.cherry_pick);
-        assert_eq!(opts.revision.as_deref(), Some("@"));
+        assert_eq!(opts.base.as_deref(), Some("trunk()"));
     }
 
     // Integration tests would require more complex setup with actual Git repositories

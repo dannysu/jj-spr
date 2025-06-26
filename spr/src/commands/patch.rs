@@ -7,8 +7,6 @@
 
 use crate::{
     error::Result,
-    message::{build_commit_message, MessageSection},
-    output::output,
 };
 
 #[derive(Debug, clap::Parser)]
@@ -26,109 +24,20 @@ pub struct PatchOptions {
 }
 
 pub async fn patch(
-    opts: PatchOptions,
-    git: &crate::git::Git,
-    gh: &mut crate::github::GitHub,
-    config: &crate::config::Config,
+    _opts: PatchOptions,
+    _jj: &crate::jj::Jujutsu,
+    _gh: &mut crate::github::GitHub,
+    _config: &crate::config::Config,
+    _revision: &str,
 ) -> Result<()> {
-    let pr = gh.clone().get_pull_request(opts.pull_request).await?;
-    output(
-        "#️⃣ ",
-        &format!(
-            "Pull Request #{}: {}",
-            pr.number,
-            pr.sections
-                .get(&MessageSection::Title)
-                .map(|s| &s[..])
-                .unwrap_or("(no title)")
-        ),
-    )?;
-
-    let branch_name = if let Some(name) = opts.branch_name {
-        name
-    } else {
-        git.lock_and_get_pr_patch_branch_name(pr.number)?
-    };
-
-    let patch_branch_oid = if let Some(oid) = pr.merge_commit {
-        output("❗", "Pull Request has been merged")?;
-
-        oid
-    } else {
-        // Current oid of the master branch
-        let current_master_oid =
-            git.lock_and_resolve_reference(config.master_ref.local())?;
-
-        // The parent commit to base the new PR branch on shall be the master
-        // commit this PR is based on
-        let mut pr_master_oid = git
-            .lock_repo()
-            .merge_base(pr.head_oid, current_master_oid)?;
-
-        // The PR may be against master or some base branch. `pr.base_oid`
-        // indicates what the PR base is, but might point to the latest commit
-        // of the target (i.e. base) branch, and especially if the target branch
-        // is master, might be different from the commit the PR is actually
-        // based on. But the merge base of the given `pr.base_oid` and the PR
-        // head is the right commit.
-        let pr_base_oid =
-            git.lock_repo().merge_base(pr.head_oid, pr.base_oid)?;
-
-        if pr_base_oid != pr_master_oid {
-            // So the commit the PR is based on is not the same as the master
-            // commit it's based on. This means there must be a base branch that
-            // contains additional commits. We want to squash those changes into
-            // one commit that we then title "Base of Pull Reqeust #x".
-            // Oh, one more thing. The base commit might not be on master, but
-            // if it, for whatever reason, contains the same tree as the master
-            // base, the base commit we construct here would turn out to be
-            // empty. No point in creating an empty commit, so let's first check
-            // whether base tree and master tree are different.
-            let pr_base_tree =
-                git.lock_and_get_tree_oid_for_commit(pr.base_oid)?;
-            let master_tree =
-                git.lock_and_get_tree_oid_for_commit(pr_master_oid)?;
-
-            if pr_base_tree != master_tree {
-                // The base of this PR is not on master. We need to create two
-                // commits on the new branch we are making. First, a commit that
-                // represents the base of the PR. And then second, the commit
-                // that represents the contents of the PR.
-
-                pr_master_oid = git.lock_and_create_derived_commit(
-                    pr_base_oid,
-                    &format!("[spr] Base of Pull Request #{}", pr.number),
-                    pr_base_tree,
-                    &[pr_master_oid],
-                )?;
-            }
-        }
-
-        // Create the main commit for the patch branch. This is based on a
-        // master commit, or, if the PR can't be based on master directly, on
-        // the commit we created above to prepare the base of this commit.
-        git.lock_and_create_derived_commit(
-            pr.head_oid,
-            &build_commit_message(&pr.sections),
-            git.lock_and_get_tree_oid_for_commit(pr.head_oid)?,
-            &[pr_master_oid],
-        )?
-    };
-
-    let repo = git.lock_repo();
-    let patch_branch_commit = repo.find_commit(patch_branch_oid)?;
-
-    // Create the new branch, now that we know the commit it shall point to
-    repo.force_branch(&branch_name, &patch_branch_commit)?;
-
-    output("🌱", &format!("Created new branch: {}", &branch_name))?;
-
-    if !opts.no_checkout {
-        // Check out the new branch
-        repo.checkout_tree(patch_branch_commit.as_object())?;
-        repo.set_head(&format!("refs/heads/{}", branch_name))?;
-        output("✅", "Checked out")?;
-    }
-
-    Ok(())
+    // TODO: Implement Jujutsu-native patch functionality
+    // This command needs to be completely rewritten for Jujutsu workflow
+    // The current implementation uses complex Git operations that need
+    // to be translated to Jujutsu equivalents
+    
+    use crate::error::Error;
+    Err(Error::new(
+        "The patch command is not yet implemented for Jujutsu workflow. \
+         Please use the GitHub web interface to create branches from pull requests for now.".to_string()
+    ))
 }

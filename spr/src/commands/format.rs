@@ -13,39 +13,43 @@ use crate::{
 
 #[derive(Debug, clap::Parser)]
 pub struct FormatOptions {
-    /// format all commits in branch, not just HEAD
+    /// Format commits in range from base to revision
     #[clap(long, short = 'a')]
     all: bool,
+
+    /// Base revision for --all mode (if not specified, uses trunk)
+    #[clap(long)]
+    base: Option<String>,
 }
 
 pub async fn format(
     opts: FormatOptions,
-    git: &crate::git::Git,
+    jj: &crate::jj::Jujutsu,
     config: &crate::config::Config,
+    revision: Option<&str>,
 ) -> Result<()> {
-    let mut pc = git.lock_and_get_prepared_commits(config)?;
+    let revision = revision.unwrap_or("@");
+    
+    let mut pc = if opts.all {
+        let base = opts.base.as_deref().unwrap_or("trunk()");
+        jj.get_prepared_commits_from_to(config, base, revision)?
+    } else {
+        vec![jj.get_prepared_commit_for_revision(config, revision)?]
+    };
 
-    let len = pc.len();
-    if len == 0 {
-        output("👋", "Branch is empty - nothing to do. Good bye!")?;
+    if pc.is_empty() {
+        output("👋", "No commits found - nothing to do. Good bye!")?;
         return Ok(());
     }
 
-    // The slice of prepared commits we want to operate on.
-    let slice = if opts.all {
-        &mut pc[..]
-    } else {
-        &mut pc[len - 1..]
-    };
-
     let mut failure = false;
 
-    for commit in slice.iter() {
+    for commit in pc.iter() {
         write_commit_title(commit)?;
         failure = validate_commit_message(&commit.message, config).is_err()
             || failure;
     }
-    git.lock_and_rewrite_commit_messages(slice, None)?;
+    jj.rewrite_commit_messages(&mut pc)?;
 
     if failure {
         Err(Error::empty())

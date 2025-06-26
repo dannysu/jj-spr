@@ -10,7 +10,6 @@ use serde::Deserialize;
 
 use crate::{
     error::{Error, Result, ResultExt},
-    git::Git,
     message::{
         build_github_body, parse_message, MessageSection, MessageSectionsMap,
     },
@@ -20,7 +19,6 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone)]
 pub struct GitHub {
     config: crate::config::Config,
-    git: crate::git::Git,
     graphql_client: reqwest::Client,
 }
 
@@ -133,12 +131,10 @@ pub struct PullRequestMergeabilityQuery;
 impl GitHub {
     pub fn new(
         config: crate::config::Config,
-        git: crate::git::Git,
         graphql_client: reqwest::Client,
     ) -> Self {
         Self {
             config,
-            git,
             graphql_client,
         }
     }
@@ -164,7 +160,6 @@ impl GitHub {
     pub async fn get_pull_request(self, number: u64) -> Result<PullRequest> {
         let GitHub {
             config,
-            git,
             graphql_client,
         } = self;
 
@@ -201,10 +196,48 @@ impl GitHub {
         let base = config.new_github_branch_from_ref(&pr.base_ref_name)?;
         let head = config.new_github_branch_from_ref(&pr.head_ref_name)?;
 
-        Git::fetch_from_remote(&[&head, &base], &config.remote_name).await?;
+        // Fetch refs from remote using git (since we're in a colocated repo)
+        let _fetch_result = tokio::process::Command::new("git")
+            .args([
+                "fetch",
+                "--no-write-fetch-head",
+                &config.remote_name,
+                &format!("{}:{}", head.on_github(), head.local()),
+                &format!("{}:{}", base.on_github(), base.local()),
+            ])
+            .output()
+            .await;
 
-        let base_oid = git.lock_and_resolve_reference(base.local())?;
-        let head_oid = git.lock_and_resolve_reference(head.local())?;
+        // Convert branch refs to OIDs
+        let base_oid = if let Ok(output) = tokio::process::Command::new("git")
+            .args(["rev-parse", base.local()])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let oid_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                git2::Oid::from_str(&oid_str).unwrap_or(git2::Oid::zero())
+            } else {
+                git2::Oid::zero()
+            }
+        } else {
+            git2::Oid::zero()
+        };
+
+        let head_oid = if let Ok(output) = tokio::process::Command::new("git")
+            .args(["rev-parse", head.local()])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let oid_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                git2::Oid::from_str(&oid_str).unwrap_or(git2::Oid::zero())
+            } else {
+                git2::Oid::zero()
+            }
+        } else {
+            git2::Oid::zero()
+        };
 
         let mut sections = parse_message(&pr.body, MessageSection::Summary);
 

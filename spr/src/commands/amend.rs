@@ -7,54 +7,56 @@
 
 use crate::{
     error::{Error, Result},
-    git::PreparedCommit,
+    jj::PreparedCommit,
     message::validate_commit_message,
     output::{output, write_commit_title},
 };
 
 #[derive(Debug, clap::Parser)]
 pub struct AmendOptions {
-    /// Amend all commits in branch, not just HEAD
+    /// Amend commits in range from base to revision
     #[clap(long, short = 'a')]
     all: bool,
+
+    /// Base revision for --all mode (if not specified, uses trunk)
+    #[clap(long)]
+    base: Option<String>,
 }
 
 pub async fn amend(
     opts: AmendOptions,
-    git: &crate::git::Git,
+    jj: &crate::jj::Jujutsu,
     gh: &mut crate::github::GitHub,
     config: &crate::config::Config,
+    revision: &str,
 ) -> Result<()> {
-    let mut pc = git.lock_and_get_prepared_commits(config)?;
+    let mut pc = if opts.all {
+        let base = opts.base.as_deref().unwrap_or("trunk()");
+        jj.get_prepared_commits_from_to(config, base, revision)?
+    } else {
+        vec![jj.get_prepared_commit_for_revision(config, revision)?]
+    };
 
-    let len = pc.len();
-    if len == 0 {
-        output("👋", "Branch is empty - nothing to do. Good bye!")?;
+    if pc.is_empty() {
+        output("👋", "No commits found - nothing to do. Good bye!")?;
         return Ok(());
     }
-
-    // The slice of prepared commits we want to operate on.
-    let slice = if opts.all {
-        &mut pc[..]
-    } else {
-        &mut pc[len - 1..]
-    };
 
     // Request the Pull Request information for each commit (well, those that
     // declare to have Pull Requests). This list is in reverse order, so that
     // below we can pop from the vector as we iterate.
-    let mut pull_requests: Vec<_> = slice
+    let mut pull_requests: Vec<_> = pc
         .iter()
         .rev()
-        .map(|pc: &PreparedCommit| {
-            pc.pull_request_number
+        .map(|commit: &PreparedCommit| {
+            commit.pull_request_number
                 .map(|number| tokio::spawn(gh.clone().get_pull_request(number)))
         })
         .collect();
 
     let mut failure = false;
 
-    for commit in slice.iter_mut() {
+    for commit in pc.iter_mut() {
         write_commit_title(commit)?;
         let pull_request = pull_requests.pop().flatten();
         if let Some(pull_request) = pull_request {
@@ -64,7 +66,7 @@ pub async fn amend(
         failure = validate_commit_message(&commit.message, config).is_err()
             || failure;
     }
-    git.lock_and_rewrite_commit_messages(slice, None)?;
+    jj.rewrite_commit_messages(&mut pc)?;
 
     if failure {
         Err(Error::empty())

@@ -11,7 +11,7 @@ use indoc::formatdoc;
 
 use crate::{
     error::{add_error, Error, Result},
-    git::PreparedCommit,
+    jj::PreparedCommit,
     github::{PullRequestState, PullRequestUpdate},
     message::MessageSection,
     output::{output, write_commit_title},
@@ -19,30 +19,34 @@ use crate::{
 
 #[derive(Debug, clap::Parser)]
 pub struct CloseOptions {
-    /// Close Pull Requests for the whole branch, not just the HEAD commit
+    /// Close Pull Requests for commits in range from base to revision
     #[clap(long, short = 'a')]
     all: bool,
+
+    /// Base revision for --all mode (if not specified, uses trunk)
+    #[clap(long)]
+    base: Option<String>,
 }
 
 pub async fn close(
     opts: CloseOptions,
-    git: &crate::git::Git,
+    jj: &crate::jj::Jujutsu,
     gh: &mut crate::github::GitHub,
     config: &crate::config::Config,
+    revision: &str,
 ) -> Result<()> {
     let mut result = Ok(());
 
-    let mut prepared_commits = git.lock_and_get_prepared_commits(config)?;
-
-    if prepared_commits.is_empty() {
-        output("👋", "Branch is empty - nothing to do. Good bye!")?;
-        return result;
+    let mut prepared_commits = if opts.all {
+        let base = opts.base.as_deref().unwrap_or("trunk()");
+        jj.get_prepared_commits_from_to(config, base, revision)?
+    } else {
+        vec![jj.get_prepared_commit_for_revision(config, revision)?]
     };
 
-    if !opts.all {
-        // Remove all prepared commits from the vector but the last. So, if
-        // `--all` is not given, we only operate on the HEAD commit.
-        prepared_commits.drain(0..prepared_commits.len() - 1);
+    if prepared_commits.is_empty() {
+        output("👋", "No commits found - nothing to do. Good bye!")?;
+        return result;
     }
 
     for prepared_commit in prepared_commits.iter_mut() {
@@ -59,14 +63,11 @@ pub async fn close(
         result = close_impl(gh, config, prepared_commit).await;
     }
 
-    // This updates the commit message in the local Git repository (if it was
+    // This updates the commit message in the local Jujutsu repository (if it was
     // changed by the implementation)
     add_error(
         &mut result,
-        git.lock_and_rewrite_commit_messages(
-            prepared_commits.as_mut_slice(),
-            None,
-        ),
+        jj.rewrite_commit_messages(&mut prepared_commits),
     );
 
     result

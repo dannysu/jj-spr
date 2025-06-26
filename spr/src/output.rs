@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::{error::Result, git::PreparedCommit, message::MessageSection};
+use crate::{error::Result, jj::PreparedCommit, message::MessageSection};
 
 pub fn output(icon: &str, text: &str) -> Result<()> {
     let term = console::Term::stdout();

@@ -5,30 +5,69 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! A command-line tool for submitting and updating GitHub Pull Requests from
-//! local Git commits that may be amended and rebased. Pull Requests can be
+//! A Jujutsu subcommand for submitting and updating GitHub Pull Requests from
+//! local Jujutsu commits that may be amended and rebased. Pull Requests can be
 //! stacked to allow for a series of code reviews of interdependent code.
 
 use clap::{Parser, Subcommand};
 use reqwest::{self, header};
-use spr::{
+use jj_spr::{
     commands,
     error::{Error, Result, ResultExt},
     output::output,
 };
 
+// Helper function to get config value from jj first, then git
+fn get_config_value(key: &str, git_config: &git2::Config) -> Option<String> {
+    // Try jj config first
+    if let Ok(output) = std::process::Command::new("jj")
+        .args(["config", "get", key])
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(value) = String::from_utf8(output.stdout) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    
+    // Fall back to git config
+    git_config.get_string(key).ok()
+}
+
+fn get_config_bool(key: &str, git_config: &git2::Config) -> Option<bool> {
+    // Try jj config first
+    if let Ok(output) = std::process::Command::new("jj")
+        .args(["config", "get", key])
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(value) = String::from_utf8(output.stdout) {
+                let trimmed = value.trim().to_lowercase();
+                if trimmed == "true" {
+                    return Some(true);
+                } else if trimmed == "false" {
+                    return Some(false);
+                }
+            }
+        }
+    }
+    
+    // Fall back to git config
+    git_config.get_bool(key).ok()
+}
+
 #[derive(Parser, Debug)]
 #[clap(
-    name = "spr",
+    name = "jj-spr",
     version,
-    about = "Submit pull requests for individual, amendable, rebaseable commits to GitHub"
+    about = "Jujutsu subcommand: Submit pull requests for individual, amendable, rebaseable commits to GitHub"
 )]
 pub struct Cli {
-    /// Change to DIR before performing any operations
-    #[clap(long, value_name = "DIR")]
-    cd: Option<String>,
-
-    /// GitHub personal access token (if not given taken from git config
+    /// GitHub personal access token (if not given taken from jj config
     /// spr.githubAuthToken)
     #[clap(long)]
     github_auth_token: Option<String>,
@@ -39,10 +78,14 @@ pub struct Cli {
     github_repository: Option<String>,
 
     /// prefix to be used for branches created for pull requests (if not given
-    /// taken from git config spr.branchPrefix, defaulting to
+    /// taken from jj config spr.branchPrefix, defaulting to
     /// 'spr/<GITHUB_USERNAME>/')
     #[clap(long)]
     branch_prefix: Option<String>,
+
+    /// Jujutsu revision to operate on (if not specified, uses @)
+    #[clap(short = 'r', long)]
+    revision: Option<String>,
 
     #[clap(subcommand)]
     command: Commands,
@@ -88,24 +131,42 @@ pub enum OptionsError {
 pub async fn spr() -> Result<()> {
     let cli = Cli::parse();
 
-    if let Some(path) = &cli.cd {
-        if let Err(err) = std::env::set_current_dir(path) {
-            eprintln!("Could not change directory to {:?}", &path);
-            return Err(err.into());
-        }
-    }
-
     if let Commands::Init = cli.command {
         return commands::init::init().await;
     }
 
-    let repo = git2::Repository::discover(std::env::current_dir()?)?;
+    // Discover the Jujutsu repository and get the colocated Git repo
+    let current_dir = std::env::current_dir()?;
+    let repo = git2::Repository::discover(&current_dir)?;
+    
+    // Verify this is a Jujutsu repository by checking for .jj directory
+    let jj_dir = current_dir.join(".jj");
+    if !jj_dir.exists() {
+        return Err(Error::new(
+            "This command requires a Jujutsu repository. Run 'jj git init --colocate' to create one.".to_string()
+        ));
+    }
 
     let git_config = repo.config()?;
 
+    // Try to get config from jj first, fall back to git config
     let github_repository = match cli.github_repository {
         Some(v) => Ok(v),
-        None => git_config.get_string("spr.githubRepository"),
+        None => {
+            // Try jj config first
+            if let Ok(output) = std::process::Command::new("jj")
+                .args(["config", "get", "spr.githubRepository"])
+                .output()
+            {
+                if output.status.success() {
+                    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+                } else {
+                    git_config.get_string("spr.githubRepository")
+                }
+            } else {
+                git_config.get_string("spr.githubRepository")
+            }
+        }
     }?;
 
     let (github_owner, github_repo) = {
@@ -120,23 +181,18 @@ pub async fn spr() -> Result<()> {
         )
     };
 
-    let github_remote_name = git_config
-        .get_string("spr.githubRemoteName")
-        .unwrap_or_else(|_| "origin".to_string());
-    let github_master_branch = git_config
-        .get_string("spr.githubMasterBranch")
-        .unwrap_or_else(|_| "master".to_string());
-    let branch_prefix = git_config.get_string("spr.branchPrefix")?;
-    let require_approval = git_config
-        .get_bool("spr.requireApproval")
-        .ok()
+    let github_remote_name = get_config_value("spr.githubRemoteName", &git_config)
+        .unwrap_or_else(|| "origin".to_string());
+    let github_master_branch = get_config_value("spr.githubMasterBranch", &git_config)
+        .unwrap_or_else(|| "main".to_string());
+    let branch_prefix = get_config_value("spr.branchPrefix", &git_config)
+        .ok_or_else(|| Error::new("spr.branchPrefix must be configured".to_string()))?;
+    let require_approval = get_config_bool("spr.requireApproval", &git_config)
         .unwrap_or(false);
-    let require_test_plan = git_config
-        .get_bool("spr.requireTestPlan")
-        .ok()
+    let require_test_plan = get_config_bool("spr.requireTestPlan", &git_config)
         .unwrap_or(true);
 
-    let config = spr::config::Config::new(
+    let config = jj_spr::config::Config::new(
         github_owner,
         github_repo,
         github_remote_name,
@@ -146,17 +202,18 @@ pub async fn spr() -> Result<()> {
         require_test_plan,
     );
 
-    let git = spr::git::Git::new(repo)
-        .context("could not initialize Git backend".to_owned())?;
+    let jj = jj_spr::jj::Jujutsu::new(repo)
+        .context("could not initialize Jujutsu backend".to_owned())?;
 
     if let Commands::Format(opts) = cli.command {
-        return commands::format::format(opts, &git, &config).await;
+        return commands::format::format(opts, &jj, &config, cli.revision.as_deref()).await;
     }
 
     let github_auth_token = match cli.github_auth_token {
-        Some(v) => Ok(v),
-        None => git_config.get_string("spr.githubAuthToken"),
-    }?;
+        Some(v) => v,
+        None => get_config_value("spr.githubAuthToken", &git_config)
+            .ok_or_else(|| Error::new("GitHub auth token must be configured".to_string()))?,
+    };
 
     octocrab::initialise(
         octocrab::Octocrab::builder().personal_token(github_auth_token.clone()),
@@ -177,28 +234,29 @@ pub async fn spr() -> Result<()> {
         .default_headers(headers)
         .build()?;
 
-    let mut gh = spr::github::GitHub::new(
+    let mut gh = jj_spr::github::GitHub::new(
         config.clone(),
-        git.clone(),
         graphql_client.clone(),
     );
 
+    let revision = cli.revision.as_deref().unwrap_or("@");
+    
     match cli.command {
         Commands::Diff(opts) => {
-            commands::diff::diff(opts, &git, &mut gh, &config).await?
+            commands::diff::diff(opts, &jj, &mut gh, &config, revision).await?
         }
         Commands::Land(opts) => {
-            commands::land::land(opts, &git, &mut gh, &config).await?
+            commands::land::land(opts, &jj, &mut gh, &config, revision).await?
         }
         Commands::Amend(opts) => {
-            commands::amend::amend(opts, &git, &mut gh, &config).await?
+            commands::amend::amend(opts, &jj, &mut gh, &config, revision).await?
         }
         Commands::List => commands::list::list(graphql_client, &config).await?,
         Commands::Patch(opts) => {
-            commands::patch::patch(opts, &git, &mut gh, &config).await?
+            commands::patch::patch(opts, &jj, &mut gh, &config, revision).await?
         }
         Commands::Close(opts) => {
-            commands::close::close(opts, &git, &mut gh, &config).await?
+            commands::close::close(opts, &jj, &mut gh, &config, revision).await?
         }
         // The following commands are executed above and return from this
         // function before it reaches this match.
