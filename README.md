@@ -10,20 +10,9 @@ This project is a fork of the original [spr](https://github.com/getcord/spr) too
 
 ### Why This Fork Exists
 
-The original spr was designed for Git workflows. While sunshowers began adapting it for Jujutsu, their fork remained incomplete. This fork:
+This fork is a fork of a fork of [spr](https://github.com/spacedentist/spr) which was then forked by [`sunshowers`](https://github.com/sunshowers/spr).
 
-- **Completes the Jujutsu integration** with full support for Jujutsu repositories and workflows
-- **Fixes critical bugs** in stacked pull request handling that caused parent commits to become immutable
-- **Adds new features** like improved revision parameter handling and range support
-- **Provides a seamless Jujutsu subcommand experience** with proper `jj spr` integration
-
-### Key Improvements
-
-- ✅ **Complete Jujutsu Support**: Works natively with Jujutsu repositories and change IDs
-- ✅ **Fixed Stacked PRs**: Proper handling of stacked changes without affecting parent commits
-- ✅ **Enhanced CLI**: Per-command revision parameters with range support (`jj spr diff -r main..@`)
-- ✅ **Better Defaults**: Uses `@-` as the default revision for more intuitive workflows
-- ✅ **Robust Testing**: Comprehensive test coverage for Jujutsu-specific scenarios
+This fork continues the sunshowers fork but tries to integrate fully with jujutsu rather than be based fully on git with a few jj parts.
 
 ## Installation
 
