@@ -22,17 +22,21 @@ pub struct LandOptions {
     /// --cherry-pick
     #[clap(long)]
     cherry_pick: bool,
+
+    /// Jujutsu revision to operate on (if not specified, uses '@-')
+    #[clap(short = 'r', long)]
+    revision: Option<String>,
 }
 
 pub async fn land(
-    _opts: LandOptions,
+    opts: LandOptions,
     jj: &crate::jj::Jujutsu,
     gh: &mut crate::github::GitHub,
     config: &crate::config::Config,
-    revision: &str,
 ) -> Result<()> {
     jj.check_no_uncommitted_changes()?;
     
+    let revision = opts.revision.as_deref().unwrap_or("@");
     let prepared_commit = jj.get_prepared_commit_for_revision(config, revision)?;
 
     // For Jujutsu, we'll determine if this is cherry-pick based on the revision's ancestry

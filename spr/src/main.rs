@@ -83,10 +83,6 @@ pub struct Cli {
     #[clap(long)]
     branch_prefix: Option<String>,
 
-    /// Jujutsu revision to operate on (if not specified, uses @)
-    #[clap(short = 'r', long)]
-    revision: Option<String>,
-
     #[clap(subcommand)]
     command: Commands,
 }
@@ -206,7 +202,7 @@ pub async fn spr() -> Result<()> {
         .context("could not initialize Jujutsu backend".to_owned())?;
 
     if let Commands::Format(opts) = cli.command {
-        return commands::format::format(opts, &jj, &config, cli.revision.as_deref()).await;
+        return commands::format::format(opts, &jj, &config).await;
     }
 
     let github_auth_token = match cli.github_auth_token {
@@ -239,24 +235,22 @@ pub async fn spr() -> Result<()> {
         graphql_client.clone(),
     );
 
-    let revision = cli.revision.as_deref().unwrap_or("@");
-    
     match cli.command {
         Commands::Diff(opts) => {
-            commands::diff::diff(opts, &jj, &mut gh, &config, revision).await?
+            commands::diff::diff(opts, &jj, &mut gh, &config).await?
         }
         Commands::Land(opts) => {
-            commands::land::land(opts, &jj, &mut gh, &config, revision).await?
+            commands::land::land(opts, &jj, &mut gh, &config).await?
         }
         Commands::Amend(opts) => {
-            commands::amend::amend(opts, &jj, &mut gh, &config, revision).await?
+            commands::amend::amend(opts, &jj, &mut gh, &config).await?
         }
         Commands::List => commands::list::list(graphql_client, &config).await?,
         Commands::Patch(opts) => {
-            commands::patch::patch(opts, &jj, &mut gh, &config, revision).await?
+            commands::patch::patch(opts, &jj, &mut gh, &config).await?
         }
         Commands::Close(opts) => {
-            commands::close::close(opts, &jj, &mut gh, &config, revision).await?
+            commands::close::close(opts, &jj, &mut gh, &config).await?
         }
         // The following commands are executed above and return from this
         // function before it reaches this match.

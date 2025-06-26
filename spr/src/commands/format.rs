@@ -20,21 +20,29 @@ pub struct FormatOptions {
     /// Base revision for --all mode (if not specified, uses trunk)
     #[clap(long)]
     base: Option<String>,
+
+    /// Jujutsu revision(s) to operate on. Can be a single revision like '@' or a range like 'main..@'
+    /// If a range is provided, behaves like --all mode. If not specified, uses '@-'
+    #[clap(short = 'r', long)]
+    revision: Option<String>,
 }
 
 pub async fn format(
     opts: FormatOptions,
     jj: &crate::jj::Jujutsu,
     config: &crate::config::Config,
-    revision: Option<&str>,
 ) -> Result<()> {
-    let revision = revision.unwrap_or("@");
+    // Determine revision and whether to use range mode
+    let (use_range_mode, base_rev, target_rev) = crate::revision_utils::parse_revision_and_range(
+        opts.revision.as_deref(),
+        opts.all,
+        opts.base.as_deref(),
+    )?;
     
-    let mut pc = if opts.all {
-        let base = opts.base.as_deref().unwrap_or("trunk()");
-        jj.get_prepared_commits_from_to(config, base, revision)?
+    let mut pc = if use_range_mode {
+        jj.get_prepared_commits_from_to(config, &base_rev, &target_rev)?
     } else {
-        vec![jj.get_prepared_commit_for_revision(config, revision)?]
+        vec![jj.get_prepared_commit_for_revision(config, &target_rev)?]
     };
 
     if pc.is_empty() {

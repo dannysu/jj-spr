@@ -7,8 +7,7 @@
 
 use std::{
     ffi::OsStr,
-    fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
 };
 
@@ -28,6 +27,7 @@ pub struct PreparedCommit {
     pub parent_oid: Oid,
     pub message: MessageSectionsMap,
     pub pull_request_number: Option<u64>,
+    pub message_changed: bool,
 }
 
 pub struct Jujutsu {
@@ -66,6 +66,13 @@ impl Jujutsu {
     ) -> Result<PreparedCommit> {
         let commit_oid = self.resolve_revision_to_commit_id(revision)?;
         self.prepare_commit(config, commit_oid)
+    }
+
+    pub fn get_master_base_for_commit(&self, config: &Config, commit_oid: Oid) -> Result<Oid> {
+        // Find the merge base between the commit and master
+        let master_oid = self.resolve_revision_to_commit_id(config.master_ref.local())?;
+        let merge_base = self.git_repo.merge_base(commit_oid, master_oid)?;
+        Ok(merge_base)
     }
 
     pub fn get_prepared_commits_from_to(
@@ -198,8 +205,13 @@ impl Jujutsu {
             return Ok(());
         }
 
-        // Use jj describe to update commit messages
+        // Use jj describe to update commit messages, but only for commits that actually changed
         for prepared_commit in commits.iter_mut() {
+            // Only update commits whose messages were actually modified
+            if !prepared_commit.message_changed {
+                continue;
+            }
+
             let new_message = build_commit_message(&prepared_commit.message);
             
             // Get the change ID for this commit
@@ -219,6 +231,9 @@ impl Jujutsu {
                     String::from_utf8_lossy(&output.stderr)
                 )));
             }
+
+            // Reset the flag after successful update
+            prepared_commit.message_changed = false;
         }
 
         Ok(())
@@ -248,6 +263,7 @@ impl Jujutsu {
             parent_oid,
             message,
             pull_request_number,
+            message_changed: false,
         })
     }
 
@@ -324,7 +340,7 @@ fn get_jj_bin() -> PathBuf {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use std::fs;
+    use std::{fs, path::Path};
 
     fn create_test_config() -> Config {
         Config::new(

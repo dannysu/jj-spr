@@ -48,6 +48,11 @@ pub struct DiffOptions {
     /// Base revision for --all mode (if not specified, uses trunk)
     #[clap(long)]
     base: Option<String>,
+
+    /// Jujutsu revision(s) to operate on. Can be a single revision like '@' or a range like 'main..@'
+    /// If a range is provided, behaves like --all mode. If not specified, uses '@-'
+    #[clap(short = 'r', long)]
+    revision: Option<String>,
 }
 
 pub async fn diff(
@@ -55,27 +60,37 @@ pub async fn diff(
     jj: &crate::jj::Jujutsu,
     gh: &mut crate::github::GitHub,
     config: &crate::config::Config,
-    revision: &str,
 ) -> Result<()> {
     // Abort right here if the local Jujutsu repository is not clean
     jj.check_no_uncommitted_changes()?;
 
     let mut result = Ok(());
 
+    // Determine revision and whether to use range mode
+    let (use_range_mode, base_rev, target_rev) = crate::revision_utils::parse_revision_and_range(
+        opts.revision.as_deref(),
+        opts.all,
+        opts.base.as_deref(),
+    )?;
+
     // Get commits to process
-    let mut prepared_commits = if opts.all {
-        // Get range of commits from base to revision
-        let base = opts.base.as_deref().unwrap_or("trunk()");
-        jj.get_prepared_commits_from_to(config, base, revision)?
+    let mut prepared_commits = if use_range_mode {
+        // Get range of commits from base to target
+        jj.get_prepared_commits_from_to(config, &base_rev, &target_rev)?
     } else {
         // Just get the single specified revision
-        vec![jj.get_prepared_commit_for_revision(config, revision)?]
+        vec![jj.get_prepared_commit_for_revision(config, &target_rev)?]
     };
 
-    // The parent of the first commit in the list is the commit on master that
-    // the local branch is based on
+    // Determine the master base OID - this is the commit on master that the stack is based on
     let master_base_oid = if let Some(first_commit) = prepared_commits.first() {
-        first_commit.parent_oid
+        if use_range_mode {
+            // For range mode, the parent of the first commit is the master base
+            first_commit.parent_oid
+        } else {
+            // For single commit mode, find the actual merge base with master
+            jj.get_master_base_for_commit(config, first_commit.oid)?
+        }
     } else {
         output("👋", "No commits found - nothing to do. Good bye!")?;
         return result;
@@ -283,6 +298,7 @@ async fn diff_impl(
                 MessageSection::Reviewers,
                 checked_reviewers.join(", "),
             );
+            local_commit.message_changed = true;
         }
     }
 
@@ -650,6 +666,7 @@ async fn diff_impl(
         )?;
 
         message.insert(MessageSection::PullRequest, pull_request_url);
+        local_commit.message_changed = true;
 
         let result = gh
             .request_reviewers(pull_request_number, requested_reviewers)
@@ -752,6 +769,7 @@ mod tests {
             message: None,
             cherry_pick: false,
             base: None,
+            revision: None,
         };
 
         assert!(!opts.all);
@@ -771,6 +789,7 @@ mod tests {
             message: None,
             cherry_pick: false,
             base: Some("main".to_string()),
+            revision: None,
         };
 
         assert_eq!(opts.base, Some("main".to_string()));
@@ -795,6 +814,7 @@ mod tests {
             message: None,
             cherry_pick: false,
             base: Some("main".to_string()),
+            revision: None,
         };
 
         assert_eq!(opts_with_base.base.as_deref(), Some("main"));
@@ -807,6 +827,7 @@ mod tests {
             message: None,
             cherry_pick: false,
             base: Some("trunk()".to_string()),
+            revision: None,
         };
 
         assert_eq!(opts_with_trunk.base.as_deref(), Some("trunk()"));
@@ -821,6 +842,7 @@ mod tests {
             message: None,
             cherry_pick: false,
             base: Some("trunk()".to_string()),
+            revision: None,
         };
 
         // When --all is specified, it should work with base revisions
@@ -838,6 +860,7 @@ mod tests {
             message: Some("Update message".to_string()),
             cherry_pick: false,
             base: Some("trunk()".to_string()),
+            revision: None,
         };
 
         assert!(opts.all);

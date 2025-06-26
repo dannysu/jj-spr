@@ -28,7 +28,6 @@ pub async fn patch(
     _jj: &crate::jj::Jujutsu,
     _gh: &mut crate::github::GitHub,
     _config: &crate::config::Config,
-    _revision: &str,
 ) -> Result<()> {
     // TODO: Implement Jujutsu-native patch functionality
     // This command needs to be completely rewritten for Jujutsu workflow

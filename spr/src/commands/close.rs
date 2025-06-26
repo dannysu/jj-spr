@@ -26,6 +26,11 @@ pub struct CloseOptions {
     /// Base revision for --all mode (if not specified, uses trunk)
     #[clap(long)]
     base: Option<String>,
+
+    /// Jujutsu revision(s) to operate on. Can be a single revision like '@' or a range like 'main..@'
+    /// If a range is provided, behaves like --all mode. If not specified, uses '@-'
+    #[clap(short = 'r', long)]
+    revision: Option<String>,
 }
 
 pub async fn close(
@@ -33,15 +38,20 @@ pub async fn close(
     jj: &crate::jj::Jujutsu,
     gh: &mut crate::github::GitHub,
     config: &crate::config::Config,
-    revision: &str,
 ) -> Result<()> {
     let mut result = Ok(());
 
-    let mut prepared_commits = if opts.all {
-        let base = opts.base.as_deref().unwrap_or("trunk()");
-        jj.get_prepared_commits_from_to(config, base, revision)?
+    // Determine revision and whether to use range mode
+    let (use_range_mode, base_rev, target_rev) = crate::revision_utils::parse_revision_and_range(
+        opts.revision.as_deref(),
+        opts.all,
+        opts.base.as_deref(),
+    )?;
+
+    let mut prepared_commits = if use_range_mode {
+        jj.get_prepared_commits_from_to(config, &base_rev, &target_rev)?
     } else {
-        vec![jj.get_prepared_commit_for_revision(config, revision)?]
+        vec![jj.get_prepared_commit_for_revision(config, &target_rev)?]
     };
 
     if prepared_commits.is_empty() {
@@ -125,6 +135,7 @@ async fn close_impl(
     // Remove sections from commit that are not relevant after closing.
     prepared_commit.message.remove(&MessageSection::PullRequest);
     prepared_commit.message.remove(&MessageSection::ReviewedBy);
+    prepared_commit.message_changed = true;
 
     let mut remove_old_branch_child_process =
         tokio::process::Command::new("git")
