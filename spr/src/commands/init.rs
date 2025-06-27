@@ -121,8 +121,7 @@ pub async fn init() -> Result<()> {
     )?;
 
     let url = repo.find_remote(&remote)?.url().map(String::from);
-    let regex =
-        lazy_regex::regex!(r#"github\.com[/:]([\w\-\.]+/[\w\-\.]+?)(.git)?$"#);
+    let regex = lazy_regex::regex!(r#"github\.com[/:]([\w\-\.]+/[\w\-\.]+?)(.git)?$"#);
     let github_repo = config
         .get_string("spr.githubRepository")
         .ok()
@@ -144,10 +143,7 @@ pub async fn init() -> Result<()> {
     // Master branch name (just query GitHub)
 
     let github_repo_info = octocrab
-        .get::<octocrab::models::Repository, _, _>(
-            format!("repos/{}", &github_repo),
-            None::<&()>,
-        )
+        .get::<octocrab::models::Repository, _, _>(format!("repos/{}", &github_repo), None::<&()>)
         .await?;
 
     config.set_str(
@@ -185,9 +181,7 @@ pub async fn init() -> Result<()> {
     let branch_prefix = dialoguer::Input::<String>::new()
         .with_prompt("Branch prefix")
         .with_initial_text(branch_prefix)
-        .validate_with(|input: &String| -> Result<()> {
-            validate_branch_prefix(input)
-        })
+        .validate_with(|input: &String| -> Result<()> { validate_branch_prefix(input) })
         .interact_text()?;
 
     config.set_str("spr.branchPrefix", &branch_prefix)?;
@@ -225,7 +219,9 @@ fn validate_branch_prefix(branch_prefix: &str) -> Result<()> {
     }
 
     if branch_prefix.contains("//") || branch_prefix.starts_with('/') {
-        return Err(Error::new("Branch prefix contains multiple consecutive slashes or starts with slash."));
+        return Err(Error::new(
+            "Branch prefix contains multiple consecutive slashes or starts with slash.",
+        ));
     }
 
     if branch_prefix.contains("@{") {
@@ -267,11 +263,7 @@ mod tests {
         ];
 
         for (branch_prefix, reason) in bad_prefixes {
-            assert!(
-                validate_branch_prefix(branch_prefix).is_err(),
-                "{}",
-                reason
-            );
+            assert!(validate_branch_prefix(branch_prefix).is_err(), "{}", reason);
         }
 
         let ok_prefix = "spr/some.lockprefix/with-stuff/foo";

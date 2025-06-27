@@ -38,7 +38,7 @@ pub async fn format(
         opts.all,
         opts.base.as_deref(),
     )?;
-    
+
     let mut pc = if use_range_mode {
         jj.get_prepared_commits_from_to(config, &base_rev, &target_rev)?
     } else {
@@ -54,8 +54,7 @@ pub async fn format(
 
     for commit in pc.iter() {
         write_commit_title(commit)?;
-        failure = validate_commit_message(&commit.message, config).is_err()
-            || failure;
+        failure = validate_commit_message(&commit.message, config).is_err() || failure;
     }
     jj.rewrite_commit_messages(&mut pc)?;
 

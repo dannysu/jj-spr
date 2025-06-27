@@ -35,7 +35,7 @@ pub async fn land(
     config: &crate::config::Config,
 ) -> Result<()> {
     jj.check_no_uncommitted_changes()?;
-    
+
     let revision = opts.revision.as_deref().unwrap_or("@");
     let prepared_commit = jj.get_prepared_commit_for_revision(config, revision)?;
 
@@ -44,15 +44,12 @@ pub async fn land(
 
     write_commit_title(&prepared_commit)?;
 
-    let pull_request_number =
-        if let Some(number) = prepared_commit.pull_request_number {
-            output("#️⃣ ", &format!("Pull Request #{}", number))?;
-            number
-        } else {
-            return Err(Error::new(
-                "This commit does not refer to a Pull Request.",
-            ));
-        };
+    let pull_request_number = if let Some(number) = prepared_commit.pull_request_number {
+        output("#️⃣ ", &format!("Pull Request #{}", number))?;
+        number
+    } else {
+        return Err(Error::new("This commit does not refer to a Pull Request."));
+    };
 
     // Load Pull Request information
     let pull_request = gh.clone().get_pull_request(pull_request_number).await?;
@@ -63,9 +60,7 @@ pub async fn land(
         )));
     }
 
-    if config.require_approval
-        && pull_request.review_status != Some(ReviewStatus::Approved)
-    {
+    if config.require_approval && pull_request.review_status != Some(ReviewStatus::Approved) {
         return Err(Error::new(
             "This Pull Request has not been approved on GitHub.",
         ));
@@ -88,7 +83,7 @@ pub async fn land(
     // TODO: Implement Jujutsu-native cherry-pick and merge validation
     // For now, we'll trust GitHub's merge validation and skip local validation
     let base_is_master = pull_request.base.is_master_branch();
-    
+
     // Skip local cherry-pick validation for Jujutsu workflow
     // GitHub will validate mergeability during the merge process
     let merge_matches_cherrypick = true;
@@ -140,7 +135,7 @@ pub async fn land(
         // TODO: Implement Jujutsu-native merge base and tree comparison
         // For now, skip the complex merge-in-master logic
         // This logic would need to be rewritten using jj commands
-        
+
         // Skip the merge-in-master commit creation for Jujutsu workflow
 
         gh.update_pull_request(
@@ -171,9 +166,7 @@ pub async fn land(
             )));
         }
 
-        if mergeability.base.is_master_branch()
-            && mergeability.mergeable.is_some()
-        {
+        if mergeability.base.is_master_branch() && mergeability.mergeable.is_some() {
             if mergeability.mergeable != Some(true) {
                 break Err(Error::new(formatdoc!(
                     "GitHub concluded the Pull Request is not mergeable at \
@@ -242,9 +235,7 @@ pub async fn land(
                     .update_pull_request(
                         pull_request_number,
                         PullRequestUpdate {
-                            base: Some(
-                                pull_request.base.on_github().to_string(),
-                            ),
+                            base: Some(pull_request.base.on_github().to_string()),
                             ..Default::default()
                         },
                     )
@@ -260,17 +251,16 @@ pub async fn land(
 
     output("🛬", "Landed!")?;
 
-    let mut remove_old_branch_child_process =
-        tokio::process::Command::new("git")
-            .arg("push")
-            .arg("--no-verify")
-            .arg("--delete")
-            .arg("--")
-            .arg(&config.remote_name)
-            .arg(pull_request.head.on_github())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+    let mut remove_old_branch_child_process = tokio::process::Command::new("git")
+        .arg("push")
+        .arg("--no-verify")
+        .arg("--delete")
+        .arg("--")
+        .arg(&config.remote_name)
+        .arg(pull_request.head.on_github())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
 
     let remove_old_base_branch_child_process = if base_is_master {
         None
@@ -315,7 +305,10 @@ pub async fn land(
         }
         // TODO: Implement Jujutsu-native rebase after landing
         // For now, the user will need to manually rebase after landing
-        output("⚠️", "Please manually rebase your working copy after landing")?;
+        output(
+            "⚠️",
+            "Please manually rebase your working copy after landing",
+        )?;
     }
 
     // Wait for the "git push" to delete the old Pull Request branch to finish,

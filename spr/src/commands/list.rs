@@ -20,10 +20,7 @@ type URI = String;
 )]
 pub struct SearchQuery;
 
-pub async fn list(
-    graphql_client: reqwest::Client,
-    config: &crate::config::Config,
-) -> Result<()> {
+pub async fn list(graphql_client: reqwest::Client, config: &crate::config::Config) -> Result<()> {
     let variables = search_query::Variables {
         query: format!(
             "repo:{}/{} is:open is:pr author:@me archived:false",
@@ -36,19 +33,18 @@ pub async fn list(
         .json(&request_body)
         .send()
         .await?;
-    let response_body: Response<search_query::ResponseData> =
-        res.json().await?;
+    let response_body: Response<search_query::ResponseData> = res.json().await?;
 
     print_pr_info(response_body).ok_or_else(|| Error::new("unexpected error"))
 }
 
-fn print_pr_info(
-    response_body: Response<search_query::ResponseData>,
-) -> Option<()> {
+fn print_pr_info(response_body: Response<search_query::ResponseData>) -> Option<()> {
     let term = console::Term::stdout();
     for pr in response_body.data?.search.nodes? {
         let pr = match pr {
-            Some(crate::commands::list::search_query::SearchQuerySearchNodes::PullRequest(pr)) => pr,
+            Some(crate::commands::list::search_query::SearchQuerySearchNodes::PullRequest(pr)) => {
+                pr
+            }
             _ => continue,
         };
         let dummy: String;
@@ -56,11 +52,10 @@ fn print_pr_info(
             Some(search_query::PullRequestReviewDecision::APPROVED) => {
                 console::style("Accepted").green()
             }
-            Some(
-                search_query::PullRequestReviewDecision::CHANGES_REQUESTED,
-            ) => console::style("Changes Requested").red(),
-            None
-            | Some(search_query::PullRequestReviewDecision::REVIEW_REQUIRED) => {
+            Some(search_query::PullRequestReviewDecision::CHANGES_REQUESTED) => {
+                console::style("Changes Requested").red()
+            }
+            None | Some(search_query::PullRequestReviewDecision::REVIEW_REQUIRED) => {
                 console::style("Pending")
             }
             Some(search_query::PullRequestReviewDecision::Other(d)) => {

@@ -107,8 +107,7 @@ mod tests {
 
     #[test]
     fn test_parse_name_multiple_names() {
-        let expected =
-            vec!["foo".to_string(), "bar".to_string(), "baz".to_string()];
+        let expected = vec!["foo".to_string(), "bar".to_string(), "baz".to_string()];
         assert_eq!(parse_name_list("foo,bar,baz"), expected);
         assert_eq!(parse_name_list("foo, bar, baz"), expected);
         assert_eq!(parse_name_list("foo , bar , baz"), expected);
@@ -117,9 +116,7 @@ mod tests {
             expected
         );
         assert_eq!(
-            parse_name_list(
-                "foo (Mr Foo) bar (Ms Bar) (the other one), baz (Dr Baz)"
-            ),
+            parse_name_list("foo (Mr Foo) bar (Ms Bar) (the other one), baz (Dr Baz)"),
             expected
         );
     }

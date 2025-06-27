@@ -5,9 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::{
-    error::Result,
-};
+use crate::error::Result;
 
 #[derive(Debug, clap::Parser)]
 pub struct PatchOptions {
@@ -33,10 +31,11 @@ pub async fn patch(
     // This command needs to be completely rewritten for Jujutsu workflow
     // The current implementation uses complex Git operations that need
     // to be translated to Jujutsu equivalents
-    
+
     use crate::error::Error;
     Err(Error::new(
         "The patch command is not yet implemented for Jujutsu workflow. \
-         Please use the GitHub web interface to create branches from pull requests for now.".to_string()
+         Please use the GitHub web interface to create branches from pull requests for now."
+            .to_string(),
     ))
 }

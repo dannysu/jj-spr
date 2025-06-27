@@ -10,9 +10,7 @@ use serde::Deserialize;
 
 use crate::{
     error::{Error, Result, ResultExt},
-    message::{
-        build_github_body, parse_message, MessageSection, MessageSectionsMap,
-    },
+    message::{build_github_body, parse_message, MessageSection, MessageSectionsMap},
 };
 use std::collections::{HashMap, HashSet};
 
@@ -59,17 +57,10 @@ pub struct PullRequestUpdate {
 
 impl PullRequestUpdate {
     pub fn is_empty(&self) -> bool {
-        self.title.is_none()
-            && self.body.is_none()
-            && self.base.is_none()
-            && self.state.is_none()
+        self.title.is_none() && self.body.is_none() && self.base.is_none() && self.state.is_none()
     }
 
-    pub fn update_message(
-        &mut self,
-        pull_request: &PullRequest,
-        message: &MessageSectionsMap,
-    ) {
+    pub fn update_message(&mut self, pull_request: &PullRequest, message: &MessageSectionsMap) {
         let title = message.get(&MessageSection::Title);
         if title.is_some() && title != Some(&pull_request.title) {
             self.title = title.cloned();
@@ -129,10 +120,7 @@ type GitObjectID = String;
 pub struct PullRequestMergeabilityQuery;
 
 impl GitHub {
-    pub fn new(
-        config: crate::config::Config,
-        graphql_client: reqwest::Client,
-    ) -> Self {
+    pub fn new(config: crate::config::Config, graphql_client: reqwest::Client) -> Self {
         Self {
             config,
             graphql_client,
@@ -174,12 +162,10 @@ impl GitHub {
             .json(&request_body)
             .send()
             .await?;
-        let response_body: Response<pull_request_query::ResponseData> =
-            res.json().await?;
+        let response_body: Response<pull_request_query::ResponseData> = res.json().await?;
 
         if let Some(errors) = response_body.errors {
-            let error =
-                Err(Error::new(format!("fetching PR #{number} failed")));
+            let error = Err(Error::new(format!("fetching PR #{number} failed")));
             return errors
                 .into_iter()
                 .fold(error, |err, e| err.context(e.to_string()));
@@ -251,10 +237,7 @@ impl GitHub {
             },
         );
 
-        sections.insert(
-            MessageSection::PullRequest,
-            config.pull_request_url(number),
-        );
+        sections.insert(MessageSection::PullRequest, config.pull_request_url(number));
 
         let reviewers: HashMap<String, ReviewStatus> = pr
             .latest_opinionated_reviews
@@ -266,7 +249,9 @@ impl GitHub {
                 let user_name = review.author.as_ref()?.login.clone();
                 let status = match review.state {
                     pull_request_query::PullRequestReviewState::APPROVED => ReviewStatus::Approved,
-                    pull_request_query::PullRequestReviewState::CHANGES_REQUESTED => ReviewStatus::Rejected,
+                    pull_request_query::PullRequestReviewState::CHANGES_REQUESTED => {
+                        ReviewStatus::Rejected
+                    }
                     _ => ReviewStatus::Requested,
                 };
                 Some((user_name, status))
@@ -274,9 +259,15 @@ impl GitHub {
             .collect();
 
         let review_status = match pr.review_decision {
-            Some(pull_request_query::PullRequestReviewDecision::APPROVED) => Some(ReviewStatus::Approved),
-            Some(pull_request_query::PullRequestReviewDecision::CHANGES_REQUESTED) => Some(ReviewStatus::Rejected),
-            Some(pull_request_query::PullRequestReviewDecision::REVIEW_REQUIRED) => Some(ReviewStatus::Requested),
+            Some(pull_request_query::PullRequestReviewDecision::APPROVED) => {
+                Some(ReviewStatus::Approved)
+            }
+            Some(pull_request_query::PullRequestReviewDecision::CHANGES_REQUESTED) => {
+                Some(ReviewStatus::Rejected)
+            }
+            Some(pull_request_query::PullRequestReviewDecision::REVIEW_REQUIRED) => {
+                Some(ReviewStatus::Requested)
+            }
             _ => None,
         };
 
@@ -335,9 +326,7 @@ impl GitHub {
         Ok::<_, Error>(PullRequest {
             number: pr.number as u64,
             state: match pr.state {
-                pull_request_query::PullRequestState::OPEN => {
-                    PullRequestState::Open
-                }
+                pull_request_query::PullRequestState::OPEN => PullRequestState::Open,
                 _ => PullRequestState::Closed,
             },
             title: pr.title,
@@ -380,11 +369,7 @@ impl GitHub {
         Ok(number)
     }
 
-    pub async fn update_pull_request(
-        &self,
-        number: u64,
-        updates: PullRequestUpdate,
-    ) -> Result<()> {
+    pub async fn update_pull_request(&self, number: u64, updates: PullRequestUpdate) -> Result<()> {
         octocrab::instance()
             .patch::<octocrab::models::pulls::PullRequest, _, _>(
                 format!(
@@ -434,9 +419,8 @@ impl GitHub {
             .json(&request_body)
             .send()
             .await?;
-        let response_body: Response<
-            pull_request_mergeability_query::ResponseData,
-        > = res.json().await?;
+        let response_body: Response<pull_request_mergeability_query::ResponseData> =
+            res.json().await?;
 
         if let Some(errors) = response_body.errors {
             let error = Err(Error::new(format!(
@@ -465,8 +449,8 @@ impl GitHub {
                 _ => None,
             },
             merge_commit: pr
-            .merge_commit
-            .and_then(|sha| git2::Oid::from_str(&sha.oid).ok()),
+                .merge_commit
+                .and_then(|sha| git2::Oid::from_str(&sha.oid).ok()),
         })
     }
 }
@@ -479,11 +463,7 @@ pub struct GitHubBranch {
 }
 
 impl GitHubBranch {
-    pub fn new_from_ref(
-        ghref: &str,
-        remote_name: &str,
-        master_branch_name: &str,
-    ) -> Result<Self> {
+    pub fn new_from_ref(ghref: &str, remote_name: &str, master_branch_name: &str) -> Result<Self> {
         let ref_on_github = if ghref.starts_with("refs/heads/") {
             ghref.to_string()
         } else if ghref.starts_with("refs/") {
@@ -545,9 +525,7 @@ mod tests {
 
     #[test]
     fn test_new_from_ref_with_branch_name() {
-        let r =
-            GitHubBranch::new_from_ref("foo", "github-remote", "masterbranch")
-                .unwrap();
+        let r = GitHubBranch::new_from_ref("foo", "github-remote", "masterbranch").unwrap();
         assert_eq!(r.on_github(), "refs/heads/foo");
         assert_eq!(r.local(), "refs/remotes/github-remote/foo");
         assert_eq!(r.branch_name(), "foo");
@@ -556,12 +534,8 @@ mod tests {
 
     #[test]
     fn test_new_from_ref_with_master_branch_name() {
-        let r = GitHubBranch::new_from_ref(
-            "masterbranch",
-            "github-remote",
-            "masterbranch",
-        )
-        .unwrap();
+        let r =
+            GitHubBranch::new_from_ref("masterbranch", "github-remote", "masterbranch").unwrap();
         assert_eq!(r.on_github(), "refs/heads/masterbranch");
         assert_eq!(r.local(), "refs/remotes/github-remote/masterbranch");
         assert_eq!(r.branch_name(), "masterbranch");
@@ -570,12 +544,8 @@ mod tests {
 
     #[test]
     fn test_new_from_ref_with_ref_name() {
-        let r = GitHubBranch::new_from_ref(
-            "refs/heads/foo",
-            "github-remote",
-            "masterbranch",
-        )
-        .unwrap();
+        let r =
+            GitHubBranch::new_from_ref("refs/heads/foo", "github-remote", "masterbranch").unwrap();
         assert_eq!(r.on_github(), "refs/heads/foo");
         assert_eq!(r.local(), "refs/remotes/github-remote/foo");
         assert_eq!(r.branch_name(), "foo");
@@ -584,12 +554,9 @@ mod tests {
 
     #[test]
     fn test_new_from_ref_with_master_ref_name() {
-        let r = GitHubBranch::new_from_ref(
-            "refs/heads/masterbranch",
-            "github-remote",
-            "masterbranch",
-        )
-        .unwrap();
+        let r =
+            GitHubBranch::new_from_ref("refs/heads/masterbranch", "github-remote", "masterbranch")
+                .unwrap();
         assert_eq!(r.on_github(), "refs/heads/masterbranch");
         assert_eq!(r.local(), "refs/remotes/github-remote/masterbranch");
         assert_eq!(r.branch_name(), "masterbranch");
@@ -598,11 +565,7 @@ mod tests {
 
     #[test]
     fn test_new_from_branch_name() {
-        let r = GitHubBranch::new_from_branch_name(
-            "foo",
-            "github-remote",
-            "masterbranch",
-        );
+        let r = GitHubBranch::new_from_branch_name("foo", "github-remote", "masterbranch");
         assert_eq!(r.on_github(), "refs/heads/foo");
         assert_eq!(r.local(), "refs/remotes/github-remote/foo");
         assert_eq!(r.branch_name(), "foo");
@@ -611,11 +574,7 @@ mod tests {
 
     #[test]
     fn test_new_from_master_branch_name() {
-        let r = GitHubBranch::new_from_branch_name(
-            "masterbranch",
-            "github-remote",
-            "masterbranch",
-        );
+        let r = GitHubBranch::new_from_branch_name("masterbranch", "github-remote", "masterbranch");
         assert_eq!(r.on_github(), "refs/heads/masterbranch");
         assert_eq!(r.local(), "refs/remotes/github-remote/masterbranch");
         assert_eq!(r.branch_name(), "masterbranch");
@@ -638,11 +597,8 @@ mod tests {
 
     #[test]
     fn test_new_from_edge_case_branch_name() {
-        let r = GitHubBranch::new_from_branch_name(
-            "refs/heads/foo",
-            "github-remote",
-            "masterbranch",
-        );
+        let r =
+            GitHubBranch::new_from_branch_name("refs/heads/foo", "github-remote", "masterbranch");
         assert_eq!(r.on_github(), "refs/heads/refs/heads/foo");
         assert_eq!(r.local(), "refs/remotes/github-remote/refs/heads/foo");
         assert_eq!(r.branch_name(), "refs/heads/foo");

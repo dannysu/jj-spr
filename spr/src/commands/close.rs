@@ -11,8 +11,8 @@ use indoc::formatdoc;
 
 use crate::{
     error::{add_error, Error, Result},
-    jj::PreparedCommit,
     github::{PullRequestState, PullRequestUpdate},
+    jj::PreparedCommit,
     message::MessageSection,
     output::{output, write_commit_title},
 };
@@ -88,15 +88,12 @@ async fn close_impl(
     config: &crate::config::Config,
     prepared_commit: &mut PreparedCommit,
 ) -> Result<()> {
-    let pull_request_number =
-        if let Some(number) = prepared_commit.pull_request_number {
-            output("#️⃣ ", &format!("Pull Request #{}", number))?;
-            number
-        } else {
-            return Err(Error::new(
-                "This commit does not refer to a Pull Request.",
-            ));
-        };
+    let pull_request_number = if let Some(number) = prepared_commit.pull_request_number {
+        output("#️⃣ ", &format!("Pull Request #{}", number))?;
+        number
+    } else {
+        return Err(Error::new("This commit does not refer to a Pull Request."));
+    };
 
     // Load Pull Request information
     let pull_request = gh.clone().get_pull_request(pull_request_number).await?;
@@ -137,17 +134,16 @@ async fn close_impl(
     prepared_commit.message.remove(&MessageSection::ReviewedBy);
     prepared_commit.message_changed = true;
 
-    let mut remove_old_branch_child_process =
-        tokio::process::Command::new("git")
-            .arg("push")
-            .arg("--no-verify")
-            .arg("--delete")
-            .arg("--")
-            .arg(&config.remote_name)
-            .arg(pull_request.head.on_github())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+    let mut remove_old_branch_child_process = tokio::process::Command::new("git")
+        .arg("push")
+        .arg("--no-verify")
+        .arg("--delete")
+        .arg("--")
+        .arg(&config.remote_name)
+        .arg(pull_request.head.on_github())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
 
     let remove_old_base_branch_child_process = if base_is_master {
         None

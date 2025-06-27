@@ -14,9 +14,7 @@ use std::{
 use crate::{
     config::Config,
     error::{Error, Result, ResultExt},
-    message::{
-        build_commit_message, parse_message, MessageSection, MessageSectionsMap,
-    },
+    message::{build_commit_message, parse_message, MessageSection, MessageSectionsMap},
 };
 use git2::Oid;
 
@@ -38,20 +36,22 @@ pub struct Jujutsu {
 
 impl Jujutsu {
     pub fn new(git_repo: git2::Repository) -> Result<Self> {
-        let repo_path = git_repo.workdir()
+        let repo_path = git_repo
+            .workdir()
             .ok_or_else(|| Error::new("Repository must have a working directory".to_string()))?
             .to_path_buf();
-        
+
         // Verify this is a Jujutsu repository
         let jj_dir = repo_path.join(".jj");
         if !jj_dir.exists() {
             return Err(Error::new(
-                "This is not a Jujutsu repository. Run 'jj git init --colocate' to create one.".to_string()
+                "This is not a Jujutsu repository. Run 'jj git init --colocate' to create one."
+                    .to_string(),
             ));
         }
 
         let jj_bin = get_jj_bin();
-        
+
         Ok(Self {
             repo_path,
             jj_bin,
@@ -107,12 +107,13 @@ impl Jujutsu {
 
     pub fn check_no_uncommitted_changes(&self) -> Result<()> {
         let output = self.run_captured_with_args(["status"])?;
-        
+
         // Check if there are any changes
         // Jujutsu reports "The working copy has no changes" when clean
-        if output.trim().is_empty() 
-            || output.contains("No changes.") 
-            || output.contains("The working copy has no changes") {
+        if output.trim().is_empty()
+            || output.contains("No changes.")
+            || output.contains("The working copy has no changes")
+        {
             Ok(())
         } else {
             Err(Error::new(format!(
@@ -126,22 +127,22 @@ impl Jujutsu {
         // Use git for ref names since jj doesn't expose them directly
         let refs = self.git_repo.references()?;
         let mut ref_names = std::collections::HashSet::new();
-        
+
         for reference in refs {
             let reference = reference?;
             if let Some(name) = reference.name() {
                 ref_names.insert(name.to_string());
             }
         }
-        
+
         Ok(ref_names)
     }
 
     pub fn resolve_reference(&self, ref_name: &str) -> Result<Oid> {
         let reference = self.git_repo.find_reference(ref_name)?;
-        Ok(reference.target().ok_or_else(|| {
-            Error::new(format!("Reference {} has no target", ref_name))
-        })?)
+        reference
+            .target()
+            .ok_or_else(|| Error::new(format!("Reference {} has no target", ref_name)))
     }
 
     pub fn get_tree_oid_for_commit(&self, commit_oid: Oid) -> Result<Oid> {
@@ -159,21 +160,16 @@ impl Jujutsu {
         let original_commit = self.git_repo.find_commit(original_commit_oid)?;
         let author = original_commit.author();
         let tree = self.git_repo.find_tree(tree_oid)?;
-        
+
         let mut parents = Vec::new();
         for &oid in parent_oids {
             parents.push(self.git_repo.find_commit(oid)?);
         }
         let parent_refs: Vec<_> = parents.iter().collect();
 
-        Ok(self.git_repo.commit(
-            None,
-            &author,
-            &author,
-            message,
-            &tree,
-            &parent_refs,
-        )?)
+        Ok(self
+            .git_repo
+            .commit(None, &author, &author, message, &tree, &parent_refs)?)
     }
 
     pub fn cherrypick(&self, commit_oid: Oid, onto_oid: Oid) -> Result<git2::Index> {
@@ -189,7 +185,12 @@ impl Jujutsu {
             self.git_repo.find_tree(empty_tree_oid)?
         };
 
-        let index = self.git_repo.cherrypick_commit(&commit, &onto_commit, 0, Some(&git2::MergeOptions::new()))?;
+        let index = self.git_repo.cherrypick_commit(
+            &commit,
+            &onto_commit,
+            0,
+            Some(&git2::MergeOptions::new()),
+        )?;
         Ok(index)
     }
 
@@ -197,10 +198,7 @@ impl Jujutsu {
         Ok(index.write_tree_to(&self.git_repo)?)
     }
 
-    pub fn rewrite_commit_messages(
-        &self,
-        commits: &mut [PreparedCommit],
-    ) -> Result<()> {
+    pub fn rewrite_commit_messages(&self, commits: &mut [PreparedCommit]) -> Result<()> {
         if commits.is_empty() {
             return Ok(());
         }
@@ -213,10 +211,10 @@ impl Jujutsu {
             }
 
             let new_message = build_commit_message(&prepared_commit.message);
-            
+
             // Get the change ID for this commit
             let change_id = self.get_change_id_for_commit(prepared_commit.oid)?;
-            
+
             // Update the commit message using jj describe
             let mut cmd = Command::new(&self.jj_bin);
             cmd.args(["describe", "-r", &change_id, "-m", &new_message])
@@ -242,7 +240,7 @@ impl Jujutsu {
     fn prepare_commit(&self, config: &Config, commit_oid: Oid) -> Result<PreparedCommit> {
         let commit = self.git_repo.find_commit(commit_oid)?;
         let short_id = format!("{:.7}", commit_oid);
-        
+
         let parent_oid = if commit.parents().count() > 0 {
             commit.parent(0)?.id()
         } else {
@@ -276,7 +274,7 @@ impl Jujutsu {
             "--template",
             "commit_id",
         ])?;
-        
+
         let commit_id_str = output.trim();
         Oid::from_str(commit_id_str).map_err(|e| {
             Error::new(format!(
@@ -296,7 +294,7 @@ impl Jujutsu {
             "--template",
             "change_id",
         ])?;
-        
+
         Ok(output.trim().to_string())
     }
 
@@ -314,7 +312,7 @@ impl Jujutsu {
         let output = child
             .wait_with_output()
             .context("failed to wait for jj to exit".to_string())?;
-        
+
         if output.status.success() {
             let output = String::from_utf8(output.stdout)
                 .context("jujutsu output was not valid UTF-8".to_string())?;
@@ -339,8 +337,8 @@ fn get_jj_bin() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::{fs, path::Path};
+    use tempfile::TempDir;
 
     fn create_test_config() -> Config {
         Config::new(
@@ -421,9 +419,8 @@ mod tests {
     #[test]
     fn test_jujutsu_creation() {
         let (_temp_dir, repo_path) = create_jujutsu_test_repo();
-        let git_repo = git2::Repository::open(&repo_path)
-            .expect("Failed to open git repository");
-        
+        let git_repo = git2::Repository::open(&repo_path).expect("Failed to open git repository");
+
         let jj = Jujutsu::new(git_repo).expect("Failed to create Jujutsu instance");
         assert!(jj.repo_path.exists());
         assert!(jj.repo_path.join(".jj").exists());
@@ -438,17 +435,24 @@ mod tests {
         let _commit1 = create_jujutsu_commit(&repo_path, "First commit", "content1");
         let _commit2 = create_jujutsu_commit(&repo_path, "Second commit", "content2");
 
-        let git_repo = git2::Repository::open(&repo_path)
-            .expect("Failed to open git repository");
+        let git_repo = git2::Repository::open(&repo_path).expect("Failed to open git repository");
         let jj = Jujutsu::new(git_repo).expect("Failed to create Jujutsu instance");
 
         // Test resolving current revision (@)
         let result = jj.get_prepared_commit_for_revision(&config, "@");
-        assert!(result.is_ok(), "Failed to resolve @ revision: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to resolve @ revision: {:?}",
+            result.err()
+        );
 
         // Test resolving previous revision (@-)
         let result = jj.get_prepared_commit_for_revision(&config, "@-");
-        assert!(result.is_ok(), "Failed to resolve @- revision: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to resolve @- revision: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -461,30 +465,36 @@ mod tests {
         let _commit2 = create_jujutsu_commit(&repo_path, "Second commit", "content2");
         let _commit3 = create_jujutsu_commit(&repo_path, "Third commit", "content3");
 
-        let git_repo = git2::Repository::open(&repo_path)
-            .expect("Failed to open git repository");
+        let git_repo = git2::Repository::open(&repo_path).expect("Failed to open git repository");
         let jj = Jujutsu::new(git_repo).expect("Failed to create Jujutsu instance");
 
         // Test getting commit range
         let result = jj.get_prepared_commits_from_to(&config, "@--", "@");
-        assert!(result.is_ok(), "Failed to get commit range: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Failed to get commit range: {:?}",
+            result.err()
+        );
+
         if let Ok(commits) = result {
             // Should get 3 commits in the range
-            assert!(commits.len() > 0, "Should get some commits in range");
+            assert!(!commits.is_empty(), "Should get some commits in range");
         }
     }
 
     #[test]
     fn test_status_check() {
         let (_temp_dir, repo_path) = create_jujutsu_test_repo();
-        
-        let git_repo = git2::Repository::open(&repo_path)
-            .expect("Failed to open git repository");
+
+        let git_repo = git2::Repository::open(&repo_path).expect("Failed to open git repository");
         let jj = Jujutsu::new(git_repo).expect("Failed to create Jujutsu instance");
 
         // Should pass since new repo has no changes
         let result = jj.check_no_uncommitted_changes();
-        assert!(result.is_ok(), "Status check should pass for clean repo: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Status check should pass for clean repo: {:?}",
+            result.err()
+        );
     }
 }

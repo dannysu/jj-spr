@@ -10,8 +10,7 @@ use crate::{
     output::output,
 };
 
-pub type MessageSectionsMap =
-    std::collections::BTreeMap<MessageSection, String>;
+pub type MessageSectionsMap = std::collections::BTreeMap<MessageSection, String>;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub enum MessageSection {
@@ -51,16 +50,12 @@ pub fn message_section_by_label(label: &str) -> Option<MessageSection> {
     }
 }
 
-pub fn parse_message(
-    msg: &str,
-    top_section: MessageSection,
-) -> MessageSectionsMap {
+pub fn parse_message(msg: &str, top_section: MessageSection) -> MessageSectionsMap {
     let regex = lazy_regex::regex!(r#"^\s*([\w\s]+?)\s*:\s*(.*)$"#);
 
     let mut section = top_section;
     let mut lines_in_section = Vec::<&str>::new();
-    let mut sections =
-        std::collections::BTreeMap::<MessageSection, String>::new();
+    let mut sections = std::collections::BTreeMap::<MessageSection, String>::new();
 
     for (lineno, line) in msg
         .trim()
@@ -92,10 +87,7 @@ pub fn parse_message(
     }
 
     if !lines_in_section.is_empty() {
-        append_to_message_section(
-            sections.entry(section),
-            lines_in_section.join("\n").trim(),
-        );
+        append_to_message_section(sections.entry(section), lines_in_section.join("\n").trim());
     }
 
     sections
@@ -120,10 +112,7 @@ fn append_to_message_section(
     }
 }
 
-pub fn build_message(
-    section_texts: &MessageSectionsMap,
-    sections: &[MessageSection],
-) -> String {
+pub fn build_message(section_texts: &MessageSectionsMap, sections: &[MessageSection]) -> String {
     let mut result = String::new();
     let mut display_label = false;
 
@@ -134,9 +123,7 @@ pub fn build_message(
                 result.push('\n');
             }
 
-            if section != &MessageSection::Title
-                && section != &MessageSection::Summary
-            {
+            if section != &MessageSection::Title && section != &MessageSection::Summary {
                 // Once we encounter a section that's neither Title nor Summary,
                 // we start displaying the labels.
                 display_label = true;
@@ -145,13 +132,11 @@ pub fn build_message(
             if display_label {
                 let label = message_section_label(section);
                 result.push_str(label);
-                result.push_str(
-                    if label.len() + text.len() > 76 || text.contains('\n') {
-                        ":\n"
-                    } else {
-                        ": "
-                    },
-                );
+                result.push_str(if label.len() + text.len() > 76 || text.contains('\n') {
+                    ":\n"
+                } else {
+                    ": "
+                });
             }
 
             result.push_str(text);
@@ -183,9 +168,7 @@ pub fn build_github_body(section_texts: &MessageSectionsMap) -> String {
     )
 }
 
-pub fn build_github_body_for_merging(
-    section_texts: &MessageSectionsMap,
-) -> String {
+pub fn build_github_body_for_merging(section_texts: &MessageSectionsMap) -> String {
     build_message(
         section_texts,
         &[
@@ -202,9 +185,7 @@ pub fn validate_commit_message(
     message: &MessageSectionsMap,
     config: &crate::config::Config,
 ) -> Result<()> {
-    if config.require_test_plan
-        && !message.contains_key(&MessageSection::TestPlan)
-    {
+    if config.require_test_plan && !message.contains_key(&MessageSection::TestPlan) {
         output("💔", "Commit message does not have a Test Plan!")?;
         return Err(Error::empty());
     }
@@ -306,8 +287,7 @@ Reviewer:    a, b, c"#,
                 (MessageSection::Title, "Hello".to_string()),
                 (
                     MessageSection::Summary,
-                    "here is\nthe\nsummary (it's not a \"Test plan:\"!)"
-                        .to_string()
+                    "here is\nthe\nsummary (it's not a \"Test plan:\"!)".to_string()
                 ),
                 (MessageSection::TestPlan, "testzzz".to_string()),
                 (MessageSection::Reviewers, "a, b, c".to_string()),

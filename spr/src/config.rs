@@ -30,11 +30,8 @@ impl Config {
         require_approval: bool,
         require_test_plan: bool,
     ) -> Self {
-        let master_ref = GitHubBranch::new_from_branch_name(
-            &master_branch,
-            &remote_name,
-            &master_branch,
-        );
+        let master_ref =
+            GitHubBranch::new_from_branch_name(&master_branch, &remote_name, &master_branch);
         Self {
             owner,
             repo,
@@ -80,11 +77,7 @@ impl Config {
         None
     }
 
-    pub fn get_new_branch_name(
-        &self,
-        existing_ref_names: &HashSet<String>,
-        title: &str,
-    ) -> String {
+    pub fn get_new_branch_name(&self, existing_ref_names: &HashSet<String>, title: &str) -> String {
         self.find_unused_branch_name(existing_ref_names, &slugify(title))
     }
 
@@ -99,19 +92,14 @@ impl Config {
         )
     }
 
-    fn find_unused_branch_name(
-        &self,
-        existing_ref_names: &HashSet<String>,
-        slug: &str,
-    ) -> String {
+    fn find_unused_branch_name(&self, existing_ref_names: &HashSet<String>, slug: &str) -> String {
         let remote_name = &self.remote_name;
         let branch_prefix = &self.branch_prefix;
         let mut branch_name = format!("{branch_prefix}{slug}");
         let mut suffix = 0;
 
         loop {
-            let remote_ref =
-                format!("refs/remotes/{remote_name}/{branch_name}");
+            let remote_ref = format!("refs/remotes/{remote_name}/{branch_name}");
 
             if !existing_ref_names.contains(&remote_ref) {
                 return branch_name;
@@ -122,15 +110,8 @@ impl Config {
         }
     }
 
-    pub fn new_github_branch_from_ref(
-        &self,
-        ghref: &str,
-    ) -> Result<GitHubBranch> {
-        GitHubBranch::new_from_ref(
-            ghref,
-            &self.remote_name,
-            self.master_ref.branch_name(),
-        )
+    pub fn new_github_branch_from_ref(&self, ghref: &str) -> Result<GitHubBranch> {
+        GitHubBranch::new_from_ref(ghref, &self.remote_name, self.master_ref.branch_name())
     }
 
     pub fn new_github_branch(&self, branch_name: &str) -> GitHubBranch {
@@ -193,39 +174,27 @@ mod tests {
         let gh = config_factory();
 
         assert_eq!(
-            gh.parse_pull_request_field(
-                "https://github.com/acme/codez/pull/123"
-            ),
+            gh.parse_pull_request_field("https://github.com/acme/codez/pull/123"),
             Some(123)
         );
         assert_eq!(
-            gh.parse_pull_request_field(
-                "  https://github.com/acme/codez/pull/123  "
-            ),
+            gh.parse_pull_request_field("  https://github.com/acme/codez/pull/123  "),
             Some(123)
         );
         assert_eq!(
-            gh.parse_pull_request_field(
-                "https://github.com/acme/codez/pull/123/"
-            ),
+            gh.parse_pull_request_field("https://github.com/acme/codez/pull/123/"),
             Some(123)
         );
         assert_eq!(
-            gh.parse_pull_request_field(
-                "https://github.com/acme/codez/pull/123?x=a"
-            ),
+            gh.parse_pull_request_field("https://github.com/acme/codez/pull/123?x=a"),
             Some(123)
         );
         assert_eq!(
-            gh.parse_pull_request_field(
-                "https://github.com/acme/codez/pull/123/foo"
-            ),
+            gh.parse_pull_request_field("https://github.com/acme/codez/pull/123/foo"),
             Some(123)
         );
         assert_eq!(
-            gh.parse_pull_request_field(
-                "https://github.com/acme/codez/pull/123#abc"
-            ),
+            gh.parse_pull_request_field("https://github.com/acme/codez/pull/123#abc"),
             Some(123)
         );
     }

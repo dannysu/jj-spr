@@ -16,9 +16,7 @@ use crate::{
     config::Config,
     error::{Error, Result, ResultExt},
     github::GitHubBranch,
-    message::{
-        build_commit_message, parse_message, MessageSection, MessageSectionsMap,
-    },
+    message::{build_commit_message, parse_message, MessageSection, MessageSectionsMap},
     utils::run_command,
 };
 use debug_ignore::DebugIgnore;
@@ -52,8 +50,7 @@ impl Git {
                 #[cfg(debug_assertions)]
                 {
                     let mut messages = _error.messages().iter();
-                    let mut combined =
-                        messages.next().cloned().unwrap_or_default();
+                    let mut combined = messages.next().cloned().unwrap_or_default();
                     for message in messages {
                         combined.push_str("\n Caused by: ");
                         combined.push_str(message);
@@ -65,9 +62,7 @@ impl Git {
             }
         };
         Ok(Self {
-            repo: std::sync::Arc::new(std::sync::Mutex::new(GitRepo::new(
-                repo,
-            )?)),
+            repo: std::sync::Arc::new(std::sync::Mutex::new(GitRepo::new(repo)?)),
             jj,
         })
     }
@@ -76,10 +71,7 @@ impl Git {
         self.repo.lock().expect("poisoned mutex")
     }
 
-    pub fn lock_and_get_commit_oids(
-        &self,
-        master_ref: &str,
-    ) -> Result<Vec<Oid>> {
+    pub fn lock_and_get_commit_oids(&self, master_ref: &str) -> Result<Vec<Oid>> {
         let repo = self.lock_repo();
         let mut walk = repo.revwalk()?;
         walk.set_sorting(git2::Sort::TOPOLOGICAL.union(git2::Sort::REVERSE))?;
@@ -89,10 +81,7 @@ impl Git {
         Ok(walk.collect::<std::result::Result<Vec<Oid>, _>>()?)
     }
 
-    pub fn lock_and_get_prepared_commits(
-        &self,
-        config: &Config,
-    ) -> Result<Vec<PreparedCommit>> {
+    pub fn lock_and_get_prepared_commits(&self, config: &Config) -> Result<Vec<PreparedCommit>> {
         // TODO: This should probably acquire the lock once, not over and over.
         self.lock_and_get_commit_oids(config.master_ref.local())?
             .into_iter()
@@ -113,11 +102,11 @@ impl Git {
                 return Ok(vec![prepared_commit]);
             } else {
                 return Err(Error::new(
-                    "--revision option is only supported in Jujutsu repositories".to_string()
+                    "--revision option is only supported in Jujutsu repositories".to_string(),
                 ));
             }
         }
-        
+
         // Fall back to default behavior (HEAD commit or entire branch)
         self.lock_and_get_prepared_commits(config)
     }
@@ -154,8 +143,7 @@ impl Git {
                 if !updating {
                     return Ok(());
                 }
-                message = String::from_utf8_lossy(commit.message_bytes())
-                    .into_owned();
+                message = String::from_utf8_lossy(commit.message_bytes()).into_owned();
             }
             limit = limit.map(|n| if n > 0 { n - 1 } else { 0 });
 
@@ -216,10 +204,7 @@ impl Git {
                 // this behaviour is tuned around a land operation, it's in
                 // general not an unreasoanble thing for a rebase, ala git
                 // rebase --interactive and fixups etc.
-                repo.run_post_rewrite_rebase_hooks(&[(
-                    prepared_commit.oid,
-                    new_parent_oid,
-                )]);
+                repo.run_post_rewrite_rebase_hooks(&[(prepared_commit.oid, new_parent_oid)]);
                 continue;
             }
             let tree = repo.find_tree(tree_oid)?;
@@ -254,11 +239,7 @@ impl Git {
         // worktree changes. Once the user has dealt with those (revert, stash
         // or commit), the rebase should work nicely.
         repo.checkout_tree(new_commit.as_object())
-            .map_err(Error::from)
-            .reword(
-                "Could not check out rebased branch - please rebase manually"
-                    .into(),
-            )?;
+            .reword("Could not check out rebased branch - please rebase manually".into())?;
 
         // Update the reference. The reference may be a branch or "HEAD", if
         // detached. Either way, whatever we are on gets update to point to the
@@ -323,10 +304,7 @@ impl Git {
         Ok(())
     }
 
-    pub async fn fetch_from_remote(
-        refs: &[&GitHubBranch],
-        remote: &str,
-    ) -> Result<()> {
+    pub async fn fetch_from_remote(refs: &[&GitHubBranch], remote: &str) -> Result<()> {
         if !refs.is_empty() {
             let mut command = tokio::process::Command::new("git");
             command
@@ -347,11 +325,7 @@ impl Git {
         Ok(())
     }
 
-    pub fn lock_and_prepare_commit(
-        &self,
-        config: &Config,
-        oid: Oid,
-    ) -> Result<PreparedCommit> {
+    pub fn lock_and_prepare_commit(&self, config: &Config, oid: Oid) -> Result<PreparedCommit> {
         let repo = self.lock_repo();
         let commit = repo.find_commit(oid)?;
 
@@ -361,11 +335,9 @@ impl Git {
 
         let parent_oid = commit.parent_id(0)?;
 
-        let message =
-            String::from_utf8_lossy(commit.message_bytes()).into_owned();
+        let message = String::from_utf8_lossy(commit.message_bytes()).into_owned();
 
-        let short_id =
-            commit.as_object().short_id()?.as_str().unwrap().to_string();
+        let short_id = commit.as_object().short_id()?.as_str().unwrap().to_string();
         drop(commit);
         drop(repo);
 
@@ -376,10 +348,7 @@ impl Git {
             .and_then(|text| config.parse_pull_request_field(text));
 
         if let Some(number) = pull_request_number {
-            message.insert(
-                MessageSection::PullRequest,
-                config.pull_request_url(number),
-            );
+            message.insert(MessageSection::PullRequest, config.pull_request_url(number));
         } else {
             message.remove(&MessageSection::PullRequest);
         }
@@ -404,10 +373,7 @@ impl Git {
         Ok(result?)
     }
 
-    pub fn lock_and_get_pr_patch_branch_name(
-        &self,
-        pr_number: u64,
-    ) -> Result<String> {
+    pub fn lock_and_get_pr_patch_branch_name(&self, pr_number: u64) -> Result<String> {
         let ref_names = self.lock_and_get_all_ref_names()?;
         let default_name = format!("PR-{}", pr_number);
         if !ref_names.contains(&format!("refs/heads/{}", default_name)) {
@@ -424,11 +390,7 @@ impl Git {
         }
     }
 
-    pub fn lock_and_cherrypick(
-        &self,
-        oid: Oid,
-        base_oid: Oid,
-    ) -> Result<git2::Index> {
+    pub fn lock_and_cherrypick(&self, oid: Oid, base_oid: Oid) -> Result<git2::Index> {
         let repo = self.lock_repo();
         let commit = repo.find_commit(oid)?;
         let base_commit = repo.find_commit(base_oid)?;
@@ -514,14 +476,8 @@ impl Git {
         // now.
         let committer = repo.signature().or_else(|_| {
             git2::Signature::now(
-                String::from_utf8_lossy(
-                    original_commit.committer().name_bytes(),
-                )
-                .as_ref(),
-                String::from_utf8_lossy(
-                    original_commit.committer().email_bytes(),
-                )
-                .as_ref(),
+                String::from_utf8_lossy(original_commit.committer().name_bytes()).as_ref(),
+                String::from_utf8_lossy(original_commit.committer().email_bytes()).as_ref(),
             )
         })?;
 
@@ -529,10 +485,8 @@ impl Git {
         // commit, but we set the timestamp to now, so this commit shows up in
         // GitHub's timeline in the right place.
         let author = git2::Signature::now(
-            String::from_utf8_lossy(original_commit.author().name_bytes())
-                .as_ref(),
-            String::from_utf8_lossy(original_commit.author().email_bytes())
-                .as_ref(),
+            String::from_utf8_lossy(original_commit.author().name_bytes()).as_ref(),
+            String::from_utf8_lossy(original_commit.author().email_bytes()).as_ref(),
         )?;
 
         let oid = repo.commit(
@@ -587,6 +541,7 @@ impl GitRepo {
         Ok(self.repo.head()?)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_head(&self, reference: &str) -> Result<()> {
         Ok(self.repo.set_head(reference)?)
     }
@@ -607,6 +562,7 @@ impl GitRepo {
         Ok(self.repo.find_tree(oid)?)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn merge_base(&self, a: Oid, b: Oid) -> Result<Oid> {
         Ok(self.repo.merge_base(a, b)?)
     }
@@ -633,16 +589,13 @@ impl GitRepo {
         run_post_rewrite_hooks: RunPostRewriteRebaseHooks,
     ) -> Result<Oid> {
         let sign = self.sign.as_dyn_sign();
-        let new_oid = git2_ext::ops::commit(
-            &self.repo, author, committer, message, tree, parents, sign,
-        )?;
+        let new_oid =
+            git2_ext::ops::commit(&self.repo, author, committer, message, tree, parents, sign)?;
 
         match run_post_rewrite_hooks {
             RunPostRewriteRebaseHooks::Yes { prepared_commit } => {
-                self.hooks.run_post_rewrite_rebase(
-                    &self.repo,
-                    &[(prepared_commit, new_oid)],
-                );
+                self.hooks
+                    .run_post_rewrite_rebase(&self.repo, &[(prepared_commit, new_oid)]);
             }
             RunPostRewriteRebaseHooks::No => {}
         };
@@ -654,6 +607,7 @@ impl GitRepo {
         self.hooks.run_post_rewrite_rebase(&self.repo, changed);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn merge_commits(
         &self,
         our_commit: &git2::Commit<'_>,
@@ -662,6 +616,7 @@ impl GitRepo {
         Ok(self.repo.merge_commits(our_commit, their_commit, None)?)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn force_branch(
         &self,
         name: &str,
@@ -678,10 +633,7 @@ impl GitRepo {
         Ok(self.repo.cherrypick_commit(commit, base, 0, None)?)
     }
 
-    fn statuses(
-        &self,
-        opts: Option<&mut git2::StatusOptions>,
-    ) -> Result<git2::Statuses<'_>> {
+    fn statuses(&self, opts: Option<&mut git2::StatusOptions>) -> Result<git2::Statuses<'_>> {
         Ok(self.repo.statuses(opts)?)
     }
 
@@ -752,10 +704,7 @@ impl JujutsuRepo {
             )));
         }
         let repo_path = dot_git_path.parent().ok_or_else(|| {
-            Error::new(format!(
-                "git path {} has no parent",
-                dot_git_path.display()
-            ))
+            Error::new(format!("git path {} has no parent", dot_git_path.display()))
         })?;
 
         // This is a _potential_ jj CLI -- we need to check if the actual root lines up.
@@ -781,10 +730,7 @@ impl JujutsuRepo {
         Ok(Self { cli })
     }
 
-    fn rewrite_commit_messages(
-        &self,
-        commits: &[PreparedCommit],
-    ) -> Result<()> {
+    fn rewrite_commit_messages(&self, commits: &[PreparedCommit]) -> Result<()> {
         // Turn all the commit IDs into change IDs.
         let jj_change_data = self
             .cli
@@ -793,13 +739,12 @@ impl JujutsuRepo {
         // Use a bunch of `jj describe` operations to write out the new commit messages for each
         // change ID.
         for prepared_commit in commits {
-            let change_data =
-                jj_change_data.get(&prepared_commit.oid).ok_or_else(|| {
-                    Error::new(format!(
-                        "commit {} did not have a corresponding change ID",
-                        prepared_commit.oid
-                    ))
-                })?;
+            let change_data = jj_change_data.get(&prepared_commit.oid).ok_or_else(|| {
+                Error::new(format!(
+                    "commit {} did not have a corresponding change ID",
+                    prepared_commit.oid
+                ))
+            })?;
 
             let new_message = build_commit_message(&prepared_commit.message);
             if new_message != change_data.description {
@@ -825,10 +770,7 @@ struct JujutsuCli {
 }
 
 impl JujutsuCli {
-    fn convert_commits_to_jj<I>(
-        &self,
-        commit_ids: I,
-    ) -> Result<HashMap<Oid, JujutsuChangeData>>
+    fn convert_commits_to_jj<I>(&self, commit_ids: I) -> Result<HashMap<Oid, JujutsuChangeData>>
     where
         I: IntoIterator<Item = Oid>,
     {
@@ -867,21 +809,19 @@ impl JujutsuCli {
                 continue;
             }
 
-            let (first_line, description) =
-                chunk.split_once('\n').ok_or_else(|| {
-                    Error::new(format!(
+            let (first_line, description) = chunk.split_once('\n').ok_or_else(|| {
+                Error::new(format!(
                     "jujutsu log output chunk did not contain a newline: {}",
                     chunk
                 ))
-                })?;
+            })?;
 
-            let (commit_id, change_id) =
-                first_line.split_once('\t').ok_or_else(|| {
-                    Error::new(format!(
-                        "jujutsu log output chunk did not contain a tab: {}",
-                        chunk
-                    ))
-                })?;
+            let (commit_id, change_id) = first_line.split_once('\t').ok_or_else(|| {
+                Error::new(format!(
+                    "jujutsu log output chunk did not contain a tab: {}",
+                    chunk
+                ))
+            })?;
 
             let commit_oid = commit_ids.get(commit_id).ok_or_else(|| {
                 Error::new(format!(
@@ -924,7 +864,7 @@ impl JujutsuCli {
             "--template",
             "commit_id",
         ])?;
-        
+
         let commit_id_str = output.trim();
         Oid::from_str(commit_id_str).map_err(|e| {
             Error::new(format!(
@@ -946,8 +886,7 @@ impl JujutsuCli {
         // Capture stdout, but let stderr go to the terminal.
         command.stdout(Stdio::piped());
 
-        let child =
-            command.spawn().context("jj failed to spawn".to_string())?;
+        let child = command.spawn().context("jj failed to spawn".to_string())?;
         let output = child
             .wait_with_output()
             .context("failed to wait for jj to exit".to_string())?;
@@ -980,8 +919,8 @@ fn get_jj_bin() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     fn create_test_config() -> Config {
         Config::new(
@@ -998,15 +937,16 @@ mod tests {
     fn create_test_git_repo() -> (TempDir, git2::Repository) {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let repo = git2::Repository::init(temp_dir.path()).expect("Failed to init git repo");
-        
+
         // Create initial commit
-        let signature = git2::Signature::now("Test User", "test@example.com").expect("Failed to create signature");
+        let signature = git2::Signature::now("Test User", "test@example.com")
+            .expect("Failed to create signature");
         let tree_id = {
             let mut index = repo.index().expect("Failed to get index");
             index.write_tree().expect("Failed to write tree")
         };
         let tree = repo.find_tree(tree_id).expect("Failed to find tree");
-        
+
         repo.commit(
             Some("HEAD"),
             &signature,
@@ -1014,34 +954,39 @@ mod tests {
             "Initial commit",
             &tree,
             &[],
-        ).expect("Failed to create initial commit");
-        
+        )
+        .expect("Failed to create initial commit");
+
         drop(tree); // Drop the tree reference before moving repo
         (temp_dir, repo)
     }
 
     fn create_test_commit(repo: &git2::Repository, message: &str, content: &str) -> git2::Oid {
-        let signature = git2::Signature::now("Test User", "test@example.com").expect("Failed to create signature");
-        
+        let signature = git2::Signature::now("Test User", "test@example.com")
+            .expect("Failed to create signature");
+
         // Write content to a test file
         let repo_path = repo.workdir().expect("Failed to get workdir");
         let file_path = repo_path.join("test.txt");
         fs::write(&file_path, content).expect("Failed to write test file");
-        
+
         // Add file to index
         let mut index = repo.index().expect("Failed to get index");
-        index.add_path(std::path::Path::new("test.txt")).expect("Failed to add file to index");
+        index
+            .add_path(std::path::Path::new("test.txt"))
+            .expect("Failed to add file to index");
         index.write().expect("Failed to write index");
-        
+
         let tree_id = index.write_tree().expect("Failed to write tree");
         let tree = repo.find_tree(tree_id).expect("Failed to find tree");
-        
+
         // Get HEAD commit as parent
-        let parent_commit = repo.head()
+        let parent_commit = repo
+            .head()
             .expect("Failed to get HEAD")
             .peel_to_commit()
             .expect("Failed to peel to commit");
-        
+
         repo.commit(
             Some("HEAD"),
             &signature,
@@ -1049,7 +994,8 @@ mod tests {
             message,
             &tree,
             &[&parent_commit],
-        ).expect("Failed to create commit")
+        )
+        .expect("Failed to create commit")
     }
 
     #[test]
@@ -1060,7 +1006,7 @@ mod tests {
 
         // Test with no revision - should fall back to normal behavior
         let result = git.lock_and_get_prepared_commits_for_revision(&config, None);
-        
+
         // This may fail because we don't have commits beyond the initial one
         // but the function should not crash and should return a Result
         match result {
@@ -1082,7 +1028,7 @@ mod tests {
 
         // Test with revision but no Jujutsu - should return error
         let result = git.lock_and_get_prepared_commits_for_revision(&config, Some("test_revision"));
-        
+
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("--revision option is only supported in Jujutsu repositories"));
@@ -1092,7 +1038,7 @@ mod tests {
     fn test_git_new_without_jujutsu() {
         let (_temp_dir, repo) = create_test_git_repo();
         let git = Git::new(repo).expect("Failed to create Git instance");
-        
+
         // Should not have Jujutsu support
         assert!(git.jj.is_none());
     }
@@ -1100,21 +1046,21 @@ mod tests {
     #[test]
     fn test_lock_and_get_commit_oids() {
         let (_temp_dir, repo) = create_test_git_repo();
-        
+
         // Create a test commit before moving repo
         create_test_commit(&repo, "Test commit", "test content");
-        
+
         let git = Git::new(repo).expect("Failed to create Git instance");
-        
+
         // Test getting commit OIDs - this might fail due to reference issues in test
         // but the important thing is that the interface works
         let result = git.lock_and_get_commit_oids("refs/heads/master");
-        
+
         // Accept either success or failure since our test setup is minimal
         match result {
-            Ok(oids) => {
+            Ok(_oids) => {
                 // Success case - verify we get some commits
-                assert!(oids.len() >= 0); // Could be 0 or more commits
+                // oids.len() is always >= 0 by definition, no need to assert
             }
             Err(_) => {
                 // Error case is acceptable in test environment
@@ -1127,17 +1073,18 @@ mod tests {
     fn test_prepared_commit_creation() {
         let (_temp_dir, repo) = create_test_git_repo();
         let config = create_test_config();
-        
+
         // Create a test commit with SPR metadata before moving repo
-        let commit_message = "Test commit\n\nPull Request: https://github.com/test_owner/test_repo/pull/123";
+        let commit_message =
+            "Test commit\n\nPull Request: https://github.com/test_owner/test_repo/pull/123";
         let commit_oid = create_test_commit(&repo, commit_message, "test content");
-        
+
         let git = Git::new(repo).expect("Failed to create Git instance");
-        
+
         // Should be able to prepare the commit
         let result = git.lock_and_prepare_commit(&config, commit_oid);
         assert!(result.is_ok());
-        
+
         let prepared_commit = result.unwrap();
         assert_eq!(prepared_commit.oid, commit_oid);
         assert_eq!(prepared_commit.pull_request_number, Some(123));
@@ -1215,14 +1162,14 @@ mod tests {
         #[test]
         fn test_jujutsu_repository_detection() {
             let (_temp_dir, repo_path) = create_jujutsu_test_repo();
-            
+
             // Open the Git repo that was created by jj
-            let git_repo = git2::Repository::open(&repo_path)
-                .expect("Failed to open git repository");
-            
+            let git_repo =
+                git2::Repository::open(&repo_path).expect("Failed to open git repository");
+
             // Create Git instance - should detect Jujutsu
             let git = Git::new(git_repo).expect("Failed to create Git instance");
-            
+
             // Should have Jujutsu support
             assert!(git.jj.is_some());
         }
@@ -1237,21 +1184,29 @@ mod tests {
             let _commit2_id = create_jujutsu_commit(&repo_path, "Second commit", "content2");
 
             // Open the Git repo and create Git instance
-            let git_repo = git2::Repository::open(&repo_path)
-                .expect("Failed to open git repository");
+            let git_repo =
+                git2::Repository::open(&repo_path).expect("Failed to open git repository");
             let git = Git::new(git_repo).expect("Failed to create Git instance");
 
             // Test resolving current revision (@)
             let result = git.lock_and_get_prepared_commits_for_revision(&config, Some("@"));
-            assert!(result.is_ok(), "Failed to resolve @ revision: {:?}", result.err());
-            
+            assert!(
+                result.is_ok(),
+                "Failed to resolve @ revision: {:?}",
+                result.err()
+            );
+
             let commits = result.unwrap();
             assert_eq!(commits.len(), 1, "Should get exactly one commit for @");
 
             // Test resolving previous revision (@-)
             let result = git.lock_and_get_prepared_commits_for_revision(&config, Some("@-"));
-            assert!(result.is_ok(), "Failed to resolve @- revision: {:?}", result.err());
-            
+            assert!(
+                result.is_ok(),
+                "Failed to resolve @- revision: {:?}",
+                result.err()
+            );
+
             let commits = result.unwrap();
             assert_eq!(commits.len(), 1, "Should get exactly one commit for @-");
         }
@@ -1265,23 +1220,33 @@ mod tests {
             let change_id = create_jujutsu_commit(&repo_path, "Test commit", "test content");
 
             // Open the Git repo and create Git instance
-            let git_repo = git2::Repository::open(&repo_path)
-                .expect("Failed to open git repository");
+            let git_repo =
+                git2::Repository::open(&repo_path).expect("Failed to open git repository");
             let git = Git::new(git_repo).expect("Failed to create Git instance");
 
             // Test resolving by change ID (first 12 characters should be enough)
             let short_change_id = &change_id[..12];
-            let result = git.lock_and_get_prepared_commits_for_revision(&config, Some(short_change_id));
-            
+            let result =
+                git.lock_and_get_prepared_commits_for_revision(&config, Some(short_change_id));
+
             match result {
                 Ok(commits) => {
-                    assert_eq!(commits.len(), 1, "Should get exactly one commit for change ID");
+                    assert_eq!(
+                        commits.len(),
+                        1,
+                        "Should get exactly one commit for change ID"
+                    );
                     // Verify the commit message was parsed correctly
-                    assert!(commits[0].message.contains_key(&crate::message::MessageSection::Title));
+                    assert!(commits[0]
+                        .message
+                        .contains_key(&crate::message::MessageSection::Title));
                 }
                 Err(e) => {
                     // Change ID resolution might fail if the format changed, but that's OK
-                    eprintln!("Change ID resolution failed (this might be expected): {}", e);
+                    eprintln!(
+                        "Change ID resolution failed (this might be expected): {}",
+                        e
+                    );
                 }
             }
         }
@@ -1295,13 +1260,16 @@ mod tests {
             let _commit_id = create_jujutsu_commit(&repo_path, "Test commit", "test content");
 
             // Open the Git repo and create Git instance
-            let git_repo = git2::Repository::open(&repo_path)
-                .expect("Failed to open git repository");
+            let git_repo =
+                git2::Repository::open(&repo_path).expect("Failed to open git repository");
             let git = Git::new(git_repo).expect("Failed to create Git instance");
 
             // Test with invalid revision
-            let result = git.lock_and_get_prepared_commits_for_revision(&config, Some("nonexistent_revision_12345"));
-            
+            let result = git.lock_and_get_prepared_commits_for_revision(
+                &config,
+                Some("nonexistent_revision_12345"),
+            );
+
             // Should return an error for invalid revision
             assert!(result.is_err(), "Should fail with invalid revision");
         }
@@ -1317,22 +1285,34 @@ mod tests {
             let _commit3 = create_jujutsu_commit(&repo_path, "Third commit", "content3");
 
             // Open the Git repo and create Git instance
-            let git_repo = git2::Repository::open(&repo_path)
-                .expect("Failed to open git repository");
+            let git_repo =
+                git2::Repository::open(&repo_path).expect("Failed to open git repository");
             let git = Git::new(git_repo).expect("Failed to create Git instance");
 
             // Test that each revision returns exactly one commit (not the whole branch)
             let result_current = git.lock_and_get_prepared_commits_for_revision(&config, Some("@"));
             assert!(result_current.is_ok());
-            assert_eq!(result_current.unwrap().len(), 1, "@ should return exactly one commit");
+            assert_eq!(
+                result_current.unwrap().len(),
+                1,
+                "@ should return exactly one commit"
+            );
 
             let result_prev = git.lock_and_get_prepared_commits_for_revision(&config, Some("@-"));
             assert!(result_prev.is_ok());
-            assert_eq!(result_prev.unwrap().len(), 1, "@- should return exactly one commit");
+            assert_eq!(
+                result_prev.unwrap().len(),
+                1,
+                "@- should return exactly one commit"
+            );
 
             let result_prev2 = git.lock_and_get_prepared_commits_for_revision(&config, Some("@--"));
             assert!(result_prev2.is_ok());
-            assert_eq!(result_prev2.unwrap().len(), 1, "@-- should return exactly one commit");
+            assert_eq!(
+                result_prev2.unwrap().len(),
+                1,
+                "@-- should return exactly one commit"
+            );
         }
 
         #[test]
@@ -1345,8 +1325,8 @@ mod tests {
             let _commit2 = create_jujutsu_commit(&repo_path, "Second commit", "content2");
 
             // Open the Git repo and create Git instance
-            let git_repo = git2::Repository::open(&repo_path)
-                .expect("Failed to open git repository");
+            let git_repo =
+                git2::Repository::open(&repo_path).expect("Failed to open git repository");
             let git = Git::new(git_repo).expect("Failed to create Git instance");
 
             // Test with no revision - should fall back to normal behavior
@@ -1356,8 +1336,11 @@ mod tests {
             // Both should give the same result (or both should fail in the same way)
             match (result_none, result_normal) {
                 (Ok(commits_none), Ok(commits_normal)) => {
-                    assert_eq!(commits_none.len(), commits_normal.len(), 
-                              "Fallback behavior should match normal behavior");
+                    assert_eq!(
+                        commits_none.len(),
+                        commits_normal.len(),
+                        "Fallback behavior should match normal behavior"
+                    );
                 }
                 (Err(_), Err(_)) => {
                     // Both failing is also acceptable for test environment

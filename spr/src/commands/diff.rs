@@ -10,8 +10,7 @@ use std::iter::zip;
 use crate::{
     error::{add_error, Error, Result, ResultExt},
     github::{
-        GitHub, PullRequest, PullRequestRequestReviewers, PullRequestState,
-        PullRequestUpdate,
+        GitHub, PullRequest, PullRequestRequestReviewers, PullRequestState, PullRequestUpdate,
     },
     message::{validate_commit_message, MessageSection},
     output::{output, write_commit_title},
@@ -168,38 +167,37 @@ async fn diff_impl(
 
     // Determine the trees the Pull Request branch and the base branch should
     // have when we're done here.
-    let (new_head_tree, new_base_tree) =
-        if !opts.cherry_pick || directly_based_on_master {
-            // Unless the user tells us to --cherry-pick, these should be the trees
-            // of the current commit and its parent.
-            // If the current commit is directly based on master (i.e.
-            // directly_based_on_master is true), then we can do this here even when
-            // the user tells us to --cherry-pick, because we would cherry pick the
-            // current commit onto its parent, which gives us the same tree as the
-            // current commit has, and the master base is the same as this commit's
-            // parent.
-            let head_tree = jj.get_tree_oid_for_commit(local_commit.oid)?;
-            let base_tree = jj.get_tree_oid_for_commit(local_commit.parent_oid)?;
+    let (new_head_tree, new_base_tree) = if !opts.cherry_pick || directly_based_on_master {
+        // Unless the user tells us to --cherry-pick, these should be the trees
+        // of the current commit and its parent.
+        // If the current commit is directly based on master (i.e.
+        // directly_based_on_master is true), then we can do this here even when
+        // the user tells us to --cherry-pick, because we would cherry pick the
+        // current commit onto its parent, which gives us the same tree as the
+        // current commit has, and the master base is the same as this commit's
+        // parent.
+        let head_tree = jj.get_tree_oid_for_commit(local_commit.oid)?;
+        let base_tree = jj.get_tree_oid_for_commit(local_commit.parent_oid)?;
 
-            (head_tree, base_tree)
-        } else {
-            // Cherry-pick the current commit onto master
-            let index = jj.cherrypick(local_commit.oid, master_base_oid)?;
+        (head_tree, base_tree)
+    } else {
+        // Cherry-pick the current commit onto master
+        let index = jj.cherrypick(local_commit.oid, master_base_oid)?;
 
-            if index.has_conflicts() {
-                return Err(Error::new(formatdoc!(
-                    "This commit cannot be cherry-picked on {master}.",
-                    master = config.master_ref.branch_name(),
-                )));
-            }
+        if index.has_conflicts() {
+            return Err(Error::new(formatdoc!(
+                "This commit cannot be cherry-picked on {master}.",
+                master = config.master_ref.branch_name(),
+            )));
+        }
 
-            // This is the tree we are getting from cherrypicking the local commit
-            // on master.
-            let cherry_pick_tree = jj.write_index(index)?;
-            let master_tree = jj.get_tree_oid_for_commit(master_base_oid)?;
+        // This is the tree we are getting from cherrypicking the local commit
+        // on master.
+        let cherry_pick_tree = jj.write_index(index)?;
+        let master_tree = jj.get_tree_oid_for_commit(master_base_oid)?;
 
-            (cherry_pick_tree, master_tree)
-        };
+        (cherry_pick_tree, master_tree)
+    };
 
     if let Some(number) = local_commit.pull_request_number {
         output(
@@ -225,8 +223,7 @@ async fn diff_impl(
         }
 
         if !opts.update_message {
-            let mut pull_request_updates: PullRequestUpdate =
-                Default::default();
+            let mut pull_request_updates: PullRequestUpdate = Default::default();
             pull_request_updates.update_message(pull_request, message);
 
             if !pull_request_updates.is_empty() {
@@ -256,11 +253,8 @@ async fn diff_impl(
             for reviewer in reviewers {
                 // Teams are indicated with a leading #
                 if let Some(slug) = reviewer.strip_prefix('#') {
-                    if let Ok(team) = GitHub::get_github_team(
-                        (&config.owner).into(),
-                        slug.into(),
-                    )
-                    .await
+                    if let Ok(team) =
+                        GitHub::get_github_team((&config.owner).into(), slug.into()).await
                     {
                         requested_reviewers
                             .team_reviewers
@@ -273,9 +267,7 @@ async fn diff_impl(
                             reviewer
                         )));
                     }
-                } else if let Ok(user) =
-                    GitHub::get_github_user(reviewer.clone()).await
-                {
+                } else if let Ok(user) = GitHub::get_github_user(reviewer.clone()).await {
                     requested_reviewers.reviewers.push(user.login);
                     if let Some(name) = user.name {
                         checked_reviewers.push(format!(
@@ -294,10 +286,7 @@ async fn diff_impl(
                 }
             }
 
-            message.insert(
-                MessageSection::Reviewers,
-                checked_reviewers.join(", "),
-            );
+            message.insert(MessageSection::Reviewers, checked_reviewers.join(", "));
             local_commit.message_changed = true;
         }
     }
@@ -312,10 +301,9 @@ async fn diff_impl(
 
     let pull_request_branch = match &pull_request {
         Some(pr) => pr.head.clone(),
-        None => config.new_github_branch(
-            &config
-                .get_new_branch_name(&jj.get_all_ref_names()?, title),
-        ),
+        None => {
+            config.new_github_branch(&config.get_new_branch_name(&jj.get_all_ref_names()?, title))
+        }
     };
 
     // Get the tree ids of the current head of the Pull Request, as well as the
@@ -357,10 +345,7 @@ async fn diff_impl(
     // existing Pull Request is necessary
     if let Some(ref pull_request) = pull_request {
         // So there is an existing Pull Request...
-        if !needs_merging_master
-            && pr_head_tree == new_head_tree
-            && pr_base_tree == new_base_tree
-        {
+        if !needs_merging_master && pr_head_tree == new_head_tree && pr_base_tree == new_base_tree {
             // ...and it does not need a rebase, and the trees of both Pull
             // Request branch and base are all the right ones.
             output("✅", "No update necessary")?;
@@ -369,17 +354,13 @@ async fn diff_impl(
                 // However, the user requested to update the commit message on
                 // GitHub
 
-                let mut pull_request_updates: PullRequestUpdate =
-                    Default::default();
+                let mut pull_request_updates: PullRequestUpdate = Default::default();
                 pull_request_updates.update_message(pull_request, message);
 
                 if !pull_request_updates.is_empty() {
                     // ...and there are actual changes to the message
-                    gh.update_pull_request(
-                        pull_request.number,
-                        pull_request_updates,
-                    )
-                    .await?;
+                    gh.update_pull_request(pull_request.number, pull_request_updates)
+                        .await?;
                     output("✍", "Updated commit message on GitHub")?;
                 }
             }
@@ -440,62 +421,56 @@ async fn diff_impl(
     // commit is not directly based on master, we have to create this new PR
     // with a base branch, so that is case 3.
 
-    let (pr_base_parent, base_branch) =
-        if pr_base_tree == new_base_tree && !needs_merging_master {
-            // Case 1
-            (None, base_branch)
-        } else if base_branch.is_none()
-            && (directly_based_on_master || opts.cherry_pick)
-        {
-            // Case 2
-            (Some(master_base_oid), None)
+    let (pr_base_parent, base_branch) = if pr_base_tree == new_base_tree && !needs_merging_master {
+        // Case 1
+        (None, base_branch)
+    } else if base_branch.is_none() && (directly_based_on_master || opts.cherry_pick) {
+        // Case 2
+        (Some(master_base_oid), None)
+    } else {
+        // Case 3
+
+        // We are constructing a base branch commit.
+        // One parent of the new base branch commit will be the current base
+        // commit, that could be either the top commit of an existing base
+        // branch, or a commit on master.
+        let mut parents = vec![pr_base_oid];
+
+        // If we need to rebase on master, make the master commit also a
+        // parent (except if the first parent is that same commit, we don't
+        // want duplicates in `parents`).
+        if needs_merging_master && pr_base_oid != master_base_oid {
+            parents.push(master_base_oid);
+        }
+
+        let new_base_branch_commit = jj.create_derived_commit(
+            local_commit.parent_oid,
+            &format!(
+                "[spr] {}\n\nCreated using jj-spr {}\n\n[skip ci]",
+                if pull_request.is_some() {
+                    "changes introduced through rebase".to_string()
+                } else {
+                    format!(
+                        "changes to {} this commit is based on",
+                        config.master_ref.branch_name()
+                    )
+                },
+                env!("CARGO_PKG_VERSION"),
+            ),
+            new_base_tree,
+            &parents[..],
+        )?;
+
+        // If `base_branch` is `None` (which means a base branch does not exist
+        // yet), then make a `GitHubBranch` with a new name for a base branch
+        let base_branch = if let Some(base_branch) = base_branch {
+            base_branch
         } else {
-            // Case 3
-
-            // We are constructing a base branch commit.
-            // One parent of the new base branch commit will be the current base
-            // commit, that could be either the top commit of an existing base
-            // branch, or a commit on master.
-            let mut parents = vec![pr_base_oid];
-
-            // If we need to rebase on master, make the master commit also a
-            // parent (except if the first parent is that same commit, we don't
-            // want duplicates in `parents`).
-            if needs_merging_master && pr_base_oid != master_base_oid {
-                parents.push(master_base_oid);
-            }
-
-            let new_base_branch_commit = jj.create_derived_commit(
-                local_commit.parent_oid,
-                &format!(
-                    "[spr] {}\n\nCreated using jj-spr {}\n\n[skip ci]",
-                    if pull_request.is_some() {
-                        "changes introduced through rebase".to_string()
-                    } else {
-                        format!(
-                            "changes to {} this commit is based on",
-                            config.master_ref.branch_name()
-                        )
-                    },
-                    env!("CARGO_PKG_VERSION"),
-                ),
-                new_base_tree,
-                &parents[..],
-            )?;
-
-            // If `base_branch` is `None` (which means a base branch does not exist
-            // yet), then make a `GitHubBranch` with a new name for a base branch
-            let base_branch = if let Some(base_branch) = base_branch {
-                base_branch
-            } else {
-                config.new_github_branch(&config.get_base_branch_name(
-                    &jj.get_all_ref_names()?,
-                    title,
-                ))
-            };
-
-            (Some(new_base_branch_commit), Some(base_branch))
+            config.new_github_branch(&config.get_base_branch_name(&jj.get_all_ref_names()?, title))
         };
+
+        (Some(new_base_branch_commit), Some(base_branch))
+    };
 
     let mut github_commit_message = opts.message.clone();
     if pull_request.is_some() && github_commit_message.is_none() {
@@ -608,8 +583,7 @@ async fn diff_impl(
             // If the Pull Request's base is not set to the base branch yet,
             // change that now.
             if pull_request.base.branch_name() != base_branch.branch_name() {
-                pull_request_updates.base =
-                    Some(base_branch.branch_name().to_string());
+                pull_request_updates.base = Some(base_branch.branch_name().to_string());
             }
         } else {
             // The Pull Request is against the master branch. In that case we
@@ -627,9 +601,7 @@ async fn diff_impl(
         // We are creating a new Pull Request.
 
         // If there's a base branch, add it to the push
-        if let (Some(base_branch), Some(base_branch_commit)) =
-            (&base_branch, pr_base_parent)
-        {
+        if let (Some(base_branch), Some(base_branch_commit)) = (&base_branch, pr_base_parent) {
             cmd.arg(format!(
                 "{}:{}",
                 base_branch_commit,
@@ -688,8 +660,8 @@ async fn diff_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     fn create_test_config() -> crate::config::Config {
         crate::config::Config::new(
@@ -703,18 +675,20 @@ mod tests {
         )
     }
 
+    #[allow(dead_code)]
     fn create_test_git_repo() -> (TempDir, git2::Repository) {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let repo = git2::Repository::init(temp_dir.path()).expect("Failed to init git repo");
-        
+
         // Create initial commit
-        let signature = git2::Signature::now("Test User", "test@example.com").expect("Failed to create signature");
+        let signature = git2::Signature::now("Test User", "test@example.com")
+            .expect("Failed to create signature");
         let tree_id = {
             let mut index = repo.index().expect("Failed to get index");
             index.write_tree().expect("Failed to write tree")
         };
         let tree = repo.find_tree(tree_id).expect("Failed to find tree");
-        
+
         repo.commit(
             Some("HEAD"),
             &signature,
@@ -722,34 +696,40 @@ mod tests {
             "Initial commit",
             &tree,
             &[],
-        ).expect("Failed to create initial commit");
-        
+        )
+        .expect("Failed to create initial commit");
+
         drop(tree); // Drop the tree reference before moving repo
         (temp_dir, repo)
     }
 
+    #[allow(dead_code)]
     fn create_test_commit(repo: &git2::Repository, message: &str, content: &str) -> git2::Oid {
-        let signature = git2::Signature::now("Test User", "test@example.com").expect("Failed to create signature");
-        
+        let signature = git2::Signature::now("Test User", "test@example.com")
+            .expect("Failed to create signature");
+
         // Write content to a test file
         let repo_path = repo.workdir().expect("Failed to get workdir");
         let file_path = repo_path.join("test.txt");
         fs::write(&file_path, content).expect("Failed to write test file");
-        
+
         // Add file to index
         let mut index = repo.index().expect("Failed to get index");
-        index.add_path(std::path::Path::new("test.txt")).expect("Failed to add file to index");
+        index
+            .add_path(std::path::Path::new("test.txt"))
+            .expect("Failed to add file to index");
         index.write().expect("Failed to write index");
-        
+
         let tree_id = index.write_tree().expect("Failed to write tree");
         let tree = repo.find_tree(tree_id).expect("Failed to find tree");
-        
+
         // Get HEAD commit as parent
-        let parent_commit = repo.head()
+        let parent_commit = repo
+            .head()
             .expect("Failed to get HEAD")
             .peel_to_commit()
             .expect("Failed to peel to commit");
-        
+
         repo.commit(
             Some("HEAD"),
             &signature,
@@ -757,7 +737,8 @@ mod tests {
             message,
             &tree,
             &[&parent_commit],
-        ).expect("Failed to create commit")
+        )
+        .expect("Failed to create commit")
     }
 
     #[test]

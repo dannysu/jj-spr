@@ -40,7 +40,7 @@ pub async fn amend(
         opts.all,
         opts.base.as_deref(),
     )?;
-    
+
     let mut pc = if use_range_mode {
         jj.get_prepared_commits_from_to(config, &base_rev, &target_rev)?
     } else {
@@ -59,7 +59,8 @@ pub async fn amend(
         .iter()
         .rev()
         .map(|commit: &PreparedCommit| {
-            commit.pull_request_number
+            commit
+                .pull_request_number
                 .map(|number| tokio::spawn(gh.clone().get_pull_request(number)))
         })
         .collect();
@@ -74,8 +75,7 @@ pub async fn amend(
             commit.message = pull_request.sections;
             commit.message_changed = true;
         }
-        failure = validate_commit_message(&commit.message, config).is_err()
-            || failure;
+        failure = validate_commit_message(&commit.message, config).is_err() || failure;
     }
     jj.rewrite_commit_messages(&mut pc)?;
 

@@ -10,12 +10,12 @@
 //! stacked to allow for a series of code reviews of interdependent code.
 
 use clap::{Parser, Subcommand};
-use reqwest::{self, header};
 use jj_spr::{
     commands,
     error::{Error, Result, ResultExt},
     output::output,
 };
+use reqwest::{self, header};
 
 // Helper function to get config value from jj first, then git
 fn get_config_value(key: &str, git_config: &git2::Config) -> Option<String> {
@@ -33,7 +33,7 @@ fn get_config_value(key: &str, git_config: &git2::Config) -> Option<String> {
             }
         }
     }
-    
+
     // Fall back to git config
     git_config.get_string(key).ok()
 }
@@ -55,7 +55,7 @@ fn get_config_bool(key: &str, git_config: &git2::Config) -> Option<bool> {
             }
         }
     }
-    
+
     // Fall back to git config
     git_config.get_bool(key).ok()
 }
@@ -118,9 +118,7 @@ enum Commands {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OptionsError {
-    #[error(
-        "GitHub repository must be given as 'OWNER/REPO', but given value was '{0}'"
-    )]
+    #[error("GitHub repository must be given as 'OWNER/REPO', but given value was '{0}'")]
     InvalidRepository(String),
 }
 
@@ -134,7 +132,7 @@ pub async fn spr() -> Result<()> {
     // Discover the Jujutsu repository and get the colocated Git repo
     let current_dir = std::env::current_dir()?;
     let repo = git2::Repository::discover(&current_dir)?;
-    
+
     // Verify this is a Jujutsu repository by checking for .jj directory
     let jj_dir = current_dir.join(".jj");
     if !jj_dir.exists() {
@@ -168,9 +166,7 @@ pub async fn spr() -> Result<()> {
     let (github_owner, github_repo) = {
         let captures = lazy_regex::regex!(r#"^([\w\-\.]+)/([\w\-\.]+)$"#)
             .captures(&github_repository)
-            .ok_or_else(|| {
-                OptionsError::InvalidRepository(github_repository.clone())
-            })?;
+            .ok_or_else(|| OptionsError::InvalidRepository(github_repository.clone()))?;
         (
             captures.get(1).unwrap().as_str().to_string(),
             captures.get(2).unwrap().as_str().to_string(),
@@ -183,10 +179,8 @@ pub async fn spr() -> Result<()> {
         .unwrap_or_else(|| "main".to_string());
     let branch_prefix = get_config_value("spr.branchPrefix", &git_config)
         .ok_or_else(|| Error::new("spr.branchPrefix must be configured".to_string()))?;
-    let require_approval = get_config_bool("spr.requireApproval", &git_config)
-        .unwrap_or(false);
-    let require_test_plan = get_config_bool("spr.requireTestPlan", &git_config)
-        .unwrap_or(true);
+    let require_approval = get_config_bool("spr.requireApproval", &git_config).unwrap_or(false);
+    let require_test_plan = get_config_bool("spr.requireTestPlan", &git_config).unwrap_or(true);
 
     let config = jj_spr::config::Config::new(
         github_owner,
@@ -211,9 +205,7 @@ pub async fn spr() -> Result<()> {
             .ok_or_else(|| Error::new("GitHub auth token must be configured".to_string()))?,
     };
 
-    octocrab::initialise(
-        octocrab::Octocrab::builder().personal_token(github_auth_token.clone()),
-    )?;
+    octocrab::initialise(octocrab::Octocrab::builder().personal_token(github_auth_token.clone()))?;
 
     let mut headers = header::HeaderMap::new();
     headers.insert(header::ACCEPT, "application/json".parse()?);
@@ -230,28 +222,15 @@ pub async fn spr() -> Result<()> {
         .default_headers(headers)
         .build()?;
 
-    let mut gh = jj_spr::github::GitHub::new(
-        config.clone(),
-        graphql_client.clone(),
-    );
+    let mut gh = jj_spr::github::GitHub::new(config.clone(), graphql_client.clone());
 
     match cli.command {
-        Commands::Diff(opts) => {
-            commands::diff::diff(opts, &jj, &mut gh, &config).await?
-        }
-        Commands::Land(opts) => {
-            commands::land::land(opts, &jj, &mut gh, &config).await?
-        }
-        Commands::Amend(opts) => {
-            commands::amend::amend(opts, &jj, &mut gh, &config).await?
-        }
+        Commands::Diff(opts) => commands::diff::diff(opts, &jj, &mut gh, &config).await?,
+        Commands::Land(opts) => commands::land::land(opts, &jj, &mut gh, &config).await?,
+        Commands::Amend(opts) => commands::amend::amend(opts, &jj, &mut gh, &config).await?,
         Commands::List => commands::list::list(graphql_client, &config).await?,
-        Commands::Patch(opts) => {
-            commands::patch::patch(opts, &jj, &mut gh, &config).await?
-        }
-        Commands::Close(opts) => {
-            commands::close::close(opts, &jj, &mut gh, &config).await?
-        }
+        Commands::Patch(opts) => commands::patch::patch(opts, &jj, &mut gh, &config).await?,
+        Commands::Close(opts) => commands::close::close(opts, &jj, &mut gh, &config).await?,
         // The following commands are executed above and return from this
         // function before it reaches this match.
         Commands::Init | Commands::Format(_) => (),
