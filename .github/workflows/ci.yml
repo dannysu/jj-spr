@@ -13,6 +13,7 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.rust == 'nightly' }}
     strategy:
       matrix:
         rust:
@@ -36,7 +37,7 @@ jobs:
 
       - name: Install Jujutsu
         run: |
-          curl -L https://github.com/martinvonz/jj/releases/download/v0.22.0/jj-v0.22.0-x86_64-unknown-linux-musl.tar.gz | tar xzf -
+          curl -L https://github.com/martinvonz/jj/releases/download/v0.30.0/jj-v0.30.0-x86_64-unknown-linux-musl.tar.gz | tar xzf -
           sudo mv jj /usr/local/bin/
           jj --version
 
@@ -51,16 +52,24 @@ jobs:
           workspaces: "spr -> target"
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: |
+          cd spr
+          cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-features --all-targets -- -D warnings
+        run: |
+          cd spr
+          cargo clippy --all-features --all-targets -- -D warnings
 
       - name: Build
-        run: cargo build --verbose
+        run: |
+          cd spr
+          cargo build --verbose
 
       - name: Run tests
-        run: cargo test --verbose
+        run: |
+          cd spr
+          cargo test --verbose
 
   security:
     name: Security Audit
@@ -77,7 +86,9 @@ jobs:
         run: cargo install cargo-audit
 
       - name: Run security audit
-        run: cargo audit
+        run: |
+          cd spr
+          cargo audit
 
   build-release:
     name: Build Release Binaries
@@ -161,7 +172,9 @@ jobs:
         run: cargo install cargo-outdated
 
       - name: Check for outdated dependencies
-        run: cargo outdated --exit-code 1
+        run: |
+          cd spr
+          cargo outdated --exit-code 1
 
   minimum-supported-rust-version:
     name: Minimum Supported Rust Version
@@ -186,7 +199,9 @@ jobs:
           workspaces: "spr -> target"
 
       - name: Check if project builds with MSRV
-        run: cargo build --verbose
+        run: |
+          cd spr
+          cargo build --verbose
 
   integration-test:
     name: Integration Tests
@@ -206,7 +221,7 @@ jobs:
 
       - name: Install Jujutsu
         run: |
-          curl -L https://github.com/martinvonz/jj/releases/download/v0.22.0/jj-v0.22.0-x86_64-unknown-linux-musl.tar.gz | tar xzf -
+          curl -L https://github.com/martinvonz/jj/releases/download/v0.30.0/jj-v0.30.0-x86_64-unknown-linux-musl.tar.gz | tar xzf -
           sudo mv jj /usr/local/bin/
 
       - name: Configure git
@@ -220,10 +235,14 @@ jobs:
           workspaces: "spr -> target"
 
       - name: Build project
-        run: cargo build --release
+        run: |
+          cd spr
+          cargo build --release
 
       - name: Run integration tests
-        run: cargo test --test '*' --verbose
+        run: |
+          cd spr
+          cargo test --test '*' --verbose
 
   docs:
     name: Documentation
@@ -246,9 +265,13 @@ jobs:
           workspaces: "spr -> target"
 
       - name: Build documentation
-        run: cargo doc --all-features --no-deps
+        run: |
+          cd spr
+          cargo doc --all-features --no-deps
 
       - name: Check for broken intra-doc links
-        run: cargo doc --all-features --no-deps
+        run: |
+          cd spr
+          cargo doc --all-features --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"

@@ -1,6 +1,6 @@
 ![spr](./spr.svg)
 
-# Introduction
+# spr Documentation
 
 spr is a command line tool for using a stacked-diff workflow with GitHub.
 
@@ -8,7 +8,20 @@ The idea behind spr is that your local branch management should not be dictated 
 
 If you've used Phabricator and its command-line tool `arc`, you'll find spr very familiar.
 
-To get started, see the [installation instructions](./user/installation.md), and the [first-time setup](./user/setup.md). (You'll need to go through setup in each repo where you want to use spr.)
+## Table of Contents
+
+### Getting Started
+- [Installation](./user/installation.md)
+- [Set up spr](./user/setup.md)
+
+### How To
+- [Create and Land a Simple PR](./user/simple.md)
+- [Stack Multiple PRs](./user/stack.md)
+- [Format and Update Commit Messages](./user/commit-message.md)
+- [Check Out Someone Else's PR](./user/patch.md)
+
+### Reference Guide
+- [Configuration](./reference/configuration.md)
 
 ## Workflow overview
 
