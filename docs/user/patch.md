@@ -28,6 +28,27 @@ You can see the fetched PR in your log:
 jj log -r ::@
 ```
 
+## How jj-spr patch works
+
+When fetching a PR created by someone else, the structure looks like this:
+
+```
+PR creator's repo:                Your repo after 'jj-spr patch':
+                                  
+X (runs spr diff here)            main (A) ──── X 
+│                                          \
+Y                                           └── Y + Z (squashed)
+│                                               │
+Z (PR #123)                                     @ (working copy)
+│
+main (A)
+```
+
+The fetched changes are organized as:
+- The PR's base commit (X) is identified and checked out
+- If there are intermediate commits (Y), they're squashed with the PR commit (Z)
+- You get a clean view with at most two commits: the base and the PR changes
+
 ## Working with the Fetched PR
 
 Once you have the PR locally, you can:

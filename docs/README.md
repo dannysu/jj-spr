@@ -1,5 +1,3 @@
-![spr](./spr.svg)
-
 # jj-spr Documentation
 
 jj-spr is a command line tool for using a stacked-diff workflow with GitHub, built for [Jujutsu](https://github.com/martinvonz/jj) version control.
