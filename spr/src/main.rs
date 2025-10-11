@@ -139,7 +139,7 @@ pub async fn spr() -> Result<()> {
         .ok_or_else(|| Error::new("Repository must have a working directory".to_string()))?
         .to_path_buf();
 
-    let jj_dir = repo_path.join(".jj");    
+    let jj_dir = repo_path.join(".jj");
     if !jj_dir.exists() {
         return Err(Error::new(
             "This command requires a Jujutsu repository. Run 'jj git init --colocate' to create one.".to_string()
