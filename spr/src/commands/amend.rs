@@ -22,8 +22,8 @@ pub struct AmendOptions {
     #[clap(long)]
     base: Option<String>,
 
-    /// Jujutsu revision(s) to operate on. Can be a single revision like '@' or a range like 'main..@'
-    /// If a range is provided, behaves like --all mode. If not specified, uses '@-'
+    /// Jujutsu revision(s) to operate on. Can be a single revision like '@' or a range like 'main..@' or 'a::c'.
+    /// If a range is provided, behaves like --all mode. If not specified, uses '@-'.
     #[clap(short = 'r', long)]
     revision: Option<String>,
 }
@@ -35,14 +35,15 @@ pub async fn amend(
     config: &crate::config::Config,
 ) -> Result<()> {
     // Determine revision and whether to use range mode
-    let (use_range_mode, base_rev, target_rev) = crate::revision_utils::parse_revision_and_range(
-        opts.revision.as_deref(),
-        opts.all,
-        opts.base.as_deref(),
-    )?;
+    let (use_range_mode, base_rev, target_rev, is_inclusive) =
+        crate::revision_utils::parse_revision_and_range(
+            opts.revision.as_deref(),
+            opts.all,
+            opts.base.as_deref(),
+        )?;
 
     let mut pc = if use_range_mode {
-        jj.get_prepared_commits_from_to(config, &base_rev, &target_rev)?
+        jj.get_prepared_commits_from_to(config, &base_rev, &target_rev, is_inclusive)?
     } else {
         vec![jj.get_prepared_commit_for_revision(config, &target_rev)?]
     };
@@ -53,11 +54,9 @@ pub async fn amend(
     }
 
     // Request the Pull Request information for each commit (well, those that
-    // declare to have Pull Requests). This list is in reverse order, so that
-    // below we can pop from the vector as we iterate.
-    let mut pull_requests: Vec<_> = pc
+    // declare to have Pull Requests).
+    let pull_requests: Vec<_> = pc
         .iter()
-        .rev()
         .map(|commit: &PreparedCommit| {
             commit
                 .pull_request_number
@@ -67,9 +66,8 @@ pub async fn amend(
 
     let mut failure = false;
 
-    for commit in pc.iter_mut() {
+    for (commit, pull_request) in pc.iter_mut().zip(pull_requests.into_iter()) {
         write_commit_title(commit)?;
-        let pull_request = pull_requests.pop().flatten();
         if let Some(pull_request) = pull_request {
             let pull_request = pull_request.await??;
             commit.message = pull_request.sections;

@@ -80,13 +80,15 @@ impl Jujutsu {
         config: &Config,
         from_revision: &str,
         to_revision: &str,
+        is_inclusive: bool,
     ) -> Result<Vec<PreparedCommit>> {
         // Get commit range using jj
+        let operator = if is_inclusive { "::" } else { ".." };
         let output = self.run_captured_with_args([
             "log",
             "--no-graph",
             "-r",
-            &format!("{}::{}", from_revision, to_revision),
+            &format!("{}{}{}", from_revision, operator, to_revision),
             "--template",
             "commit_id ++ \"\\n\"",
         ])?;
@@ -101,6 +103,8 @@ impl Jujutsu {
                 commits.push(self.prepare_commit(config, commit_oid)?);
             }
         }
+
+        commits.reverse();
 
         Ok(commits)
     }
@@ -469,7 +473,7 @@ mod tests {
         let jj = Jujutsu::new(git_repo).expect("Failed to create Jujutsu instance");
 
         // Test getting commit range
-        let result = jj.get_prepared_commits_from_to(&config, "@--", "@");
+        let result = jj.get_prepared_commits_from_to(&config, "@----", "@-", false);
         assert!(
             result.is_ok(),
             "Failed to get commit range: {:?}",
@@ -478,7 +482,28 @@ mod tests {
 
         if let Ok(commits) = result {
             // Should get 3 commits in the range
-            assert!(!commits.is_empty(), "Should get some commits in range");
+            assert_eq!(commits.len(), 3, "Should get exactly 3 commits in range");
+
+            // Commits must be in bottom-to-top order (oldest to newest).
+            let first_commit_title = commits[0]
+                .message
+                .get(&MessageSection::Title)
+                .expect("First commit should have a title");
+            let last_commit_title = commits[2]
+                .message
+                .get(&MessageSection::Title)
+                .expect("Last commit should have a title");
+
+            assert!(
+                first_commit_title.contains("First commit"),
+                "First element should be the oldest commit 'First commit', got: {}",
+                first_commit_title
+            );
+            assert!(
+                last_commit_title.contains("Third commit"),
+                "Last element should be the newest commit 'Third commit', got: {}",
+                last_commit_title
+            );
         }
     }
 
